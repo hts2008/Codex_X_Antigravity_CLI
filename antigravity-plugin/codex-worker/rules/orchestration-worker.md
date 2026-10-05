@@ -1,3 +1,8 @@
+---
+trigger: always_on
+description: "Mandatory authority, scope, Git, and completion rules for Antigravity tasks delegated by Codex through GravityBridge."
+---
+
 # Codex-Orchestrated Worker Rules
 
 These rules apply when this Antigravity runtime receives work through GravityBridge.

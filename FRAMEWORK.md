@@ -454,6 +454,7 @@ V1 should expose a small bounded toolset:
 ### Execution
 
 - `delegate_and_wait`
+- `retry_task`
 - `continue_task`
 - `cancel_task`
 
@@ -545,7 +546,7 @@ The orchestration repository is a reusable control plane. It is not copied whole
 For each target project, Codex should:
 
 1. Locate the GravityBridge repository.
-2. Read the Codex orchestration skill and protocol references.
+2. Read the Codex orchestration skill and protocol references, including `protocol/PROJECT_BOOTSTRAP.md`.
 3. Run the project bootstrap/doctor command.
 4. Ensure Antigravity CLI is installed and authenticated.
 5. Ensure the Antigravity worker plugin is installed or synchronized.

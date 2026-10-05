@@ -59,7 +59,7 @@ Interpret outcomes:
 
 - `WORKER_COMPLETED`: execution completed; begin Codex review.
 - `BLOCKED`: inspect blocker evidence and resolve if the decision can be made from project context.
-- `WORKER_FAILED`: determine whether retry is appropriate or take over.
+- `WORKER_FAILED`: determine whether retry is appropriate; call `retry_task` only for execution failure and only within the configured retry budget, otherwise take over.
 - `CANCELED`: do not assume any partial work is valid.
 
 ## Mandatory post-worker review

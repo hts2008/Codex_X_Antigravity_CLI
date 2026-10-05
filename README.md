@@ -172,6 +172,7 @@ Codex có thể yêu cầu setup/doctor chạy trước khi bắt đầu một p
 GravityBridge expose:
 
 - `delegate_and_wait`
+- `retry_task`
 - `continue_task`
 - `get_task`
 - `get_task_events`
@@ -233,6 +234,7 @@ V1 không tự thêm `--dangerously-skip-permissions`.
 - Kiến trúc tổng thể: [FRAMEWORK.md](./FRAMEWORK.md)
 - Đặc tả kỹ thuật V1: [protocol/SPECIFICATION_V1.md](./protocol/SPECIFICATION_V1.md)
 - Codex workflow skill: [skills/antigravity-orchestration/SKILL.md](./skills/antigravity-orchestration/SKILL.md)
+- Project bootstrap protocol: [protocol/PROJECT_BOOTSTRAP.md](./protocol/PROJECT_BOOTSTRAP.md)
 - Task schema: [schemas/task.schema.json](./schemas/task.schema.json)
 - Result schema: [schemas/result.schema.json](./schemas/result.schema.json)
 

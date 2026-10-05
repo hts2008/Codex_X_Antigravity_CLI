@@ -237,7 +237,26 @@ Side effects:
 
 This tool is intentionally synchronous.
 
-### 9.2 continue_task
+### 9.2 retry_task
+
+Requirements:
+
+- task exists;
+- current state is `WORKER_FAILED`;
+- retry budget is not exhausted.
+
+Behavior:
+
+- increments the execution retry counter;
+- reuses the same isolated worktree;
+- resumes the prior conversation when a conversation ID was captured;
+- preserves valid partial work;
+- re-executes the original bounded task;
+- captures new terminal evidence.
+
+A retry is for execution failure. It MUST NOT be used as a substitute for Codex review/rework.
+
+### 9.3 continue_task
 
 Requirements:
 
@@ -254,23 +273,23 @@ Behavior:
 - captures a new terminal result;
 - updates the same task record.
 
-### 9.3 get_task
+### 9.4 get_task
 
 Read-only task metadata lookup.
 
-### 9.4 get_task_events
+### 9.5 get_task_events
 
 Read-only tail of raw NDJSON worker events.
 
-### 9.5 get_worker_result
+### 9.6 get_worker_result
 
 Read-only persisted result bundle.
 
-### 9.6 get_task_diff
+### 9.7 get_task_diff
 
 Read-only current task diff against recorded base SHA.
 
-### 9.7 record_review
+### 9.8 record_review
 
 Persists Codex's independent decision.
 
@@ -285,11 +304,11 @@ Mapping:
 
 ACCEPT does not merge.
 
-### 9.8 cancel_task
+### 9.9 cancel_task
 
 Best-effort cancellation of an active child process.
 
-### 9.9 worker_health
+### 9.10 worker_health
 
 Checks prerequisites without consuming an Antigravity model turn.
 

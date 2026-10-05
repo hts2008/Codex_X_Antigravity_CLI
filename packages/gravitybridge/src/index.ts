@@ -5,7 +5,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { cancelActiveWorker } from "./agy.js";
 import { assertGitRepository, taskDiff } from "./git.js";
-import { delegateAndWait, continueTask } from "./orchestrator.js";
+import { delegateAndWait, continueTask, retryTask } from "./orchestrator.js";
 import { executable, runProcess } from "./process.js";
 import { resultSchemaPath } from "./paths.js";
 import {
@@ -45,6 +45,20 @@ server.registerTool(
     }),
   },
   async ({ repo_path, task }) => response(await delegateAndWait(repo_path, task)),
+);
+
+server.registerTool(
+  "retry_task",
+  {
+    title: "Retry failed Antigravity execution",
+    description:
+      "Retry a WORKER_FAILED task in the same isolated worktree, optionally resuming the prior Antigravity conversation when one was captured. Enforces the Task Contract max_retries budget.",
+    inputSchema: z.object({
+      repo_path: z.string().min(1),
+      task_id: z.string().min(1),
+    }),
+  },
+  async ({ repo_path, task_id }) => response(await retryTask(repo_path, task_id)),
 );
 
 server.registerTool(

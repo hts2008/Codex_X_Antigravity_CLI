@@ -1,6 +1,6 @@
 import path from "node:path";
 import { access } from "node:fs/promises";
-import { buildInitialPrompt, buildReworkPrompt } from "./prompt.js";
+import { buildInitialPrompt, buildReworkPrompt, buildRetryPrompt } from "./prompt.js";
 import { runAntigravityTurn } from "./agy.js";
 import {
   assertCleanRepository,
@@ -135,6 +135,42 @@ export async function continueTask(repoPathInput: string, taskId: string, feedba
   await saveTaskRecord(record);
 
   const prompt = buildReworkPrompt(record.task, feedback, record.rework_cycles);
+  await savePrompt(repoPath, taskId, prompt);
+
+  try {
+    const result = await runAntigravityTurn({
+      repoPath,
+      task: record.task,
+      worktreePath: record.worktree_path,
+      prompt,
+      conversationId: record.conversation_id,
+    });
+    return await finalizeWorkerTurn(record, result);
+  } catch (error) {
+    record.state = "WORKER_FAILED";
+    record.last_error = error instanceof Error ? error.message : String(error);
+    await saveTaskRecord(record);
+    return record;
+  }
+}
+
+export async function retryTask(repoPathInput: string, taskId: string): Promise<TaskRecord> {
+  const repoPath = await assertGitRepository(path.resolve(repoPathInput));
+  const record = await loadTaskRecord(repoPath, taskId);
+
+  if (record.state !== "WORKER_FAILED") {
+    throw new Error(`Task ${taskId} cannot be retried from state ${record.state}.`);
+  }
+
+  if (record.retries >= record.task.limits.max_retries) {
+    throw new Error(`Task ${taskId} exhausted max_retries=${record.task.limits.max_retries}.`);
+  }
+
+  record.retries += 1;
+  record.state = "RUNNING";
+  await saveTaskRecord(record);
+
+  const prompt = buildRetryPrompt(record.task, record.last_error, record.retries);
   await savePrompt(repoPath, taskId, prompt);
 
   try {

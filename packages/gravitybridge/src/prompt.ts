@@ -62,3 +62,25 @@ ${task.scope.forbidden_paths.map((p) => `- ${p}`).join("\n") || "- none"}
 Run the relevant validation commands and return the required structured result for task_id "${task.task_id}".
 `;
 }
+
+export function buildRetryPrompt(task: TaskContract, lastError: string | undefined, retry: number): string {
+  return `# GravityBridge execution retry — attempt ${retry}
+
+The previous Antigravity execution for task ${task.task_id} did not reach a valid worker completion state.
+
+This is an execution retry, not a redesign request.
+
+## Previous execution diagnostic
+
+${lastError || "No diagnostic was captured."}
+
+## Required behavior
+
+- Inspect the current assigned worktree before changing anything.
+- Preserve valid partial work if present.
+- Complete the original Task Contract within the same scope.
+- Do not expand scope to compensate for the failure.
+- Re-run relevant validation commands.
+- Return the required schema-constrained result for task_id "${task.task_id}".
+`;
+}

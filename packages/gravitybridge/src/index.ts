@@ -1,7 +1,7 @@
 import path from "node:path";
 import { access } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { cancelActiveWorker } from "./agy.js";
 import { assertGitRepository, taskDiff } from "./git.js";
@@ -17,10 +17,11 @@ import {
 } from "./store.js";
 import { ReviewSchema, TaskContractSchema } from "./types.js";
 
-const server = new McpServer({
-  name: "gravitybridge",
-  version: "1.0.0",
-});
+function createServer(): McpServer {
+  const server = new McpServer({
+    name: "gravitybridge",
+    version: "1.0.0",
+  });
 
 function response(value: unknown) {
   const structured = typeof value === "object" && value !== null
@@ -214,12 +215,8 @@ server.registerTool(
   },
 );
 
-async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  return server;
 }
 
-main().catch((error) => {
-  console.error("GravityBridge fatal error:", error);
-  process.exitCode = 1;
-});
+void serveStdio(createServer);
+console.error("GravityBridge MCP server running on stdio");

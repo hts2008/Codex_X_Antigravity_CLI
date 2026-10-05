@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gravitybridge.local/schemas/review.schema.json",
+  "title": "Codex Review Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "decision", "blocking_findings", "non_blocking_findings"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "task_id": { "type": "string" },
+    "decision": { "enum": ["ACCEPT", "REWORK", "REJECT", "TAKEOVER"] },
+    "blocking_findings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "non_blocking_findings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "correctness": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "architecture": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "maintainability": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "tests": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "ux": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "visual_fidelity": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    }
+  }
+}

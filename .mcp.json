@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "gravitybridge": {
+      "command": "node",
+      "args": [
+        "./packages/gravitybridge/dist/index.js"
+      ],
+      "cwd": "."
+    }
+  }
+}

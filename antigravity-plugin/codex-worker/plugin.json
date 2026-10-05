@@ -1,0 +1,5 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "codex-worker",
+  "description": "Specialist worker package for tasks delegated by Codex through GravityBridge."
+}

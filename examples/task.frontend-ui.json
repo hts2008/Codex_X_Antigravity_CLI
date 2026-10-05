@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "task_id": "GB-UI-001",
+  "type": "frontend_ui",
+  "goal": "Improve the dashboard KPI hierarchy and responsive layout without changing backend contracts.",
+  "base_sha": "REPLACE_WITH_CURRENT_HEAD_SHA",
+  "mutating": true,
+  "scope": {
+    "allowed_paths": [
+      "src/app/dashboard/**",
+      "src/components/dashboard/**"
+    ],
+    "forbidden_paths": [
+      "src/server/**",
+      "src/db/**"
+    ]
+  },
+  "acceptance_criteria": [
+    "Existing routes remain functional.",
+    "No backend API contract changes.",
+    "Dashboard does not horizontally overflow at 1366px viewport width.",
+    "Existing design tokens are reused where available.",
+    "Project lint and build pass."
+  ],
+  "context": [
+    "docs/design-system.md"
+  ],
+  "validation_commands": [
+    "npm run lint",
+    "npm run build"
+  ],
+  "dependencies": [],
+  "worker": {
+    "agent": "frontend-specialist",
+    "effort": "high",
+    "print_timeout": "30m"
+  },
+  "limits": {
+    "max_retries": 2,
+    "max_rework_cycles": 3
+  }
+}

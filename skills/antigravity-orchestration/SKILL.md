@@ -15,6 +15,14 @@ Antigravity is a worker. GravityBridge is the transport/state/evidence layer.
 
 Never delegate final engineering judgment.
 
+## Session and project lifecycle
+
+When using this framework across sessions, follow `protocol/PROMPT_SYSTEM.md` and `prompts/13_PROMPT_USAGE_ORDER.md`.
+
+For a fresh target-project session, recover durable coordination memory under `docs/GRAVITYBRIDGE/` before material work when those files exist.
+
+Human-facing lifecycle prompts are routing aids. They do not replace the Task Contract or Codex review protocol.
+
 ## Before delegation
 
 1. Inspect the target repository yourself.
@@ -141,3 +149,14 @@ Parallel delegated tasks are allowed only when their worktrees and integration b
 A task is not complete because Antigravity says “done”.
 
 A task becomes acceptable only after Codex verifies the resulting repository state.
+
+## Durable session handoff
+
+For material multi-session work, Codex should keep the target project's `docs/GRAVITYBRIDGE/` memory factual:
+
+- `CURRENT_STATE.md`
+- `SESSION_HANDOFF.md`
+- `TASK_LEDGER.md`
+- `DECISION_LOG.md` for material decisions
+
+Do not persist hidden chain-of-thought. Persist only recovery-relevant facts, decisions, evidence references, blockers, and next safe actions.

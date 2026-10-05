@@ -56,15 +56,18 @@ Codex SHOULD execute this sequence before the first delegation of a session or w
 1. Read GravityBridge AGENTS.md
 2. Read FRAMEWORK.md
 3. Read protocol/SPECIFICATION_V1.md
-4. Read skills/antigravity-orchestration/SKILL.md
-5. Confirm GravityBridge is built
-6. Confirm Antigravity plugin is installed/enabled
-7. Inspect the target repository itself
-8. Confirm target repository is Git-based
-9. Confirm target working tree is clean for V1 mutating delegation
-10. Resolve current HEAD SHA
-11. Call GravityBridge worker_health(target_repo)
-12. Only then construct the first Task Contract
+4. Read protocol/PROMPT_SYSTEM.md
+5. Read prompts/13_PROMPT_USAGE_ORDER.md
+6. Read skills/antigravity-orchestration/SKILL.md
+7. Confirm GravityBridge is built
+8. Confirm Antigravity plugin is installed/enabled
+9. Inspect the target repository itself
+10. Confirm target repository is Git-based
+11. Create/update the target project's `docs/GRAVITYBRIDGE/` coordination memory
+12. Confirm target working tree is clean for V1 mutating delegation
+13. Resolve current HEAD SHA
+14. Call GravityBridge worker_health(target_repo)
+15. Only then construct the first Task Contract
 ```
 
 Codex MUST inspect the target repository before asking Antigravity to do so. Delegation does not replace lead-engineer context acquisition.
@@ -130,7 +133,40 @@ A healthy MCP tool surface for V1 includes:
 - `record_review`
 - `cancel_task`
 
-## 7. Target-repository preflight
+## 7. Project Coordination Memory
+
+A bootstrapped target project SHOULD have:
+
+```text
+docs/GRAVITYBRIDGE/
+├── PROJECT_PROFILE.md
+├── CURRENT_STATE.md
+├── SESSION_HANDOFF.md
+├── DECISION_LOG.md
+└── TASK_LEDGER.md
+```
+
+Use `project-template/docs/GRAVITYBRIDGE/` as the baseline.
+
+The framework provides safe scaffold scripts:
+
+Windows:
+
+```powershell
+./scripts/bootstrap-target.ps1 -TargetRoot "<TARGET_PROJECT_ROOT>"
+```
+
+macOS/Linux:
+
+```bash
+./scripts/bootstrap-target.sh "<TARGET_PROJECT_ROOT>"
+```
+
+The bootstrap scripts MUST NOT overwrite existing coordination-memory files by default.
+
+This project memory is for cross-session coordination facts. Detailed worker execution evidence remains in `~/.gravitybridge/`.
+
+## 8. Target-repository preflight
 
 For V1 mutating tasks, Codex MUST verify:
 
@@ -144,7 +180,7 @@ For V1 mutating tasks, Codex MUST verify:
 
 If the target tree is dirty, Codex SHOULD commit/stash only when that is consistent with the user's workflow. GravityBridge V1 does not silently copy uncommitted changes into worker worktrees.
 
-## 8. First delegation handshake
+## 9. First delegation handshake
 
 Recommended first sequence:
 
@@ -179,7 +215,7 @@ WORKER_COMPLETED
   -> same Antigravity conversation
 ```
 
-## 9. Project-local additions
+## 10. Project-local additions
 
 A target product repository MAY add its own:
 
@@ -198,7 +234,7 @@ Antigravity = bounded specialist execution
 GravityBridge = deterministic coordination/evidence
 ```
 
-## 10. Definition of ready
+## 11. Definition of ready
 
 A target project is ready for Codex ↔ Antigravity orchestration when:
 
@@ -207,5 +243,6 @@ A target project is ready for Codex ↔ Antigravity orchestration when:
 - Antigravity authentication is valid;
 - `codex-worker` plugin is installed/enabled;
 - target repo is understood by Codex;
+- target `docs/GRAVITYBRIDGE/` coordination state exists and is coherent when the project uses durable recovery;
 - target repo is in an acceptable Git state;
 - Task Contract can be created from a concrete current base SHA.

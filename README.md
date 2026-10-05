@@ -129,7 +129,9 @@ Khi mở repo này bằng Codex, `AGENTS.md` yêu cầu Codex đọc:
 
 1. `FRAMEWORK.md`
 2. `protocol/SPECIFICATION_V1.md`
-3. `skills/antigravity-orchestration/SKILL.md`
+3. `protocol/PROMPT_SYSTEM.md`
+4. `prompts/13_PROMPT_USAGE_ORDER.md`
+5. `skills/antigravity-orchestration/SKILL.md`
 
 Repo có Codex compatibility plugin tại `.codex-plugin/plugin.json` và MCP config tại `.mcp.json`.
 
@@ -166,6 +168,71 @@ Plugin cung cấp:
 - visual-QA specialist.
 
 Codex có thể yêu cầu setup/doctor chạy trước khi bắt đầu một project mới.
+
+
+## Bộ prompt theo vòng đời dự án
+
+Repo hiện có prompt library tại [prompts/](./prompts/).
+
+Thay vì phải copy prompt qua lại giữa Codex và Antigravity, Human chủ yếu nói chuyện với **Codex**; Codex tự gọi Antigravity qua GravityBridge.
+
+Thứ tự khuyến nghị:
+
+```text
+Máy mới
+  -> GB-H01 Machine Bootstrap
+
+Project mới
+  -> GB-H02 New Project Bootstrap
+  -> GB-H03 Session Start
+
+Làm việc hằng ngày
+  -> GB-H03 Session Start
+  -> GB-H04 Daily Work
+       -> Codex tự làm hoặc delegate Antigravity
+       -> Codex tự review/rework/retry/takeover
+  -> GB-H08 Session Close
+
+Quay lại sau gián đoạn
+  -> GB-H06 Resume / Recovery
+
+State lệch
+  -> GB-H07 Sync / Reconcile
+
+Requirement đổi
+  -> GB-H09 Requirement Change
+
+Bug
+  -> GB-H10 Debug / Fix
+
+Merge/release
+  -> GB-H11 Release Gate
+```
+
+Nếu chỉ muốn biết **prompt nào dùng lúc nào**, đọc:
+
+- [prompts/README.md](./prompts/README.md)
+- [prompts/12_HUMAN_RUNBOOK.md](./prompts/12_HUMAN_RUNBOOK.md)
+- [prompts/13_PROMPT_USAGE_ORDER.md](./prompts/13_PROMPT_USAGE_ORDER.md)
+
+Target project được bootstrap nên có Project Coordination Memory tối giản:
+
+```text
+docs/GRAVITYBRIDGE/
+  PROJECT_PROFILE.md
+  CURRENT_STATE.md
+  SESSION_HANDOFF.md
+  DECISION_LOG.md
+  TASK_LEDGER.md
+```
+
+Có thể tạo bộ khung an toàn bằng:
+
+```powershell
+./scripts/bootstrap-target.ps1 -TargetRoot "D:\path\to\project"
+```
+
+Script chỉ tạo file còn thiếu, không ghi đè memory hiện hữu.
 
 ## MCP tools V1
 
@@ -235,6 +302,8 @@ V1 không tự thêm `--dangerously-skip-permissions`.
 - Đặc tả kỹ thuật V1: [protocol/SPECIFICATION_V1.md](./protocol/SPECIFICATION_V1.md)
 - Codex workflow skill: [skills/antigravity-orchestration/SKILL.md](./skills/antigravity-orchestration/SKILL.md)
 - Project bootstrap protocol: [protocol/PROJECT_BOOTSTRAP.md](./protocol/PROJECT_BOOTSTRAP.md)
+- Prompt lifecycle system: [protocol/PROMPT_SYSTEM.md](./protocol/PROMPT_SYSTEM.md)
+- Human prompt runbook: [prompts/12_HUMAN_RUNBOOK.md](./prompts/12_HUMAN_RUNBOOK.md)
 - Task schema: [schemas/task.schema.json](./schemas/task.schema.json)
 - Result schema: [schemas/result.schema.json](./schemas/result.schema.json)
 

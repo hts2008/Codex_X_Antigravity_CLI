@@ -7,9 +7,9 @@ export interface ProcessResult {
 }
 
 export function executable(name: string): string {
-  if (process.platform === "win32" && !name.toLowerCase().endsWith(".exe") && !name.toLowerCase().endsWith(".cmd")) {
-    return `${name}.cmd`;
-  }
+  // Do not force a Windows suffix here. Node can resolve native executables
+  // through PATH/PATHEXT, and Antigravity may be installed as agy.exe rather
+  // than agy.cmd.
   return name;
 }
 

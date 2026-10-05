@@ -1,11 +1,11 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
 import { executable } from "./process.js";
 import { resultSchemaPath } from "./paths.js";
 import { appendEvent, appendStderr } from "./store.js";
 import type { TaskContract, WorkerEnvelope } from "./types.js";
 
-const active = new Map<string, ChildProcessWithoutNullStreams>();
+const active = new Map<string, ChildProcess>();
 
 function key(repoPath: string, taskId: string): string {
   return `${repoPath}::${taskId}`;

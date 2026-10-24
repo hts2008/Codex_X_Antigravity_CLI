@@ -2,7 +2,7 @@
 
 ```text
 ROLE
-Continue as the same Antigravity specialist worker for task {{TASK_ID}}.
+Continue as the same Antigravity coding worker for task {{TASK_ID}}.
 
 CONTEXT
 Codex independently reviewed your previous result.

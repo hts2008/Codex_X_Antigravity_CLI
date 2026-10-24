@@ -1,18 +1,22 @@
 {
   "name": "@gravitybridge/server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Local MCP orchestration bridge between Codex and Antigravity CLI.",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts",
+    "gen:schemas": "tsx scripts/gen-schemas.ts",
+    "check:schemas": "tsx scripts/gen-schemas.ts --check",
+    "doctor": "node dist/install.js --doctor",
+    "smoke": "node dist/install.js --smoke"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.3.0",

@@ -3,7 +3,6 @@
   "task_id": "GB-UI-001",
   "type": "frontend_ui",
   "goal": "Improve the dashboard KPI hierarchy and responsive layout without changing backend contracts.",
-  "base_sha": "REPLACE_WITH_CURRENT_HEAD_SHA",
   "mutating": true,
   "scope": {
     "allowed_paths": [
@@ -25,18 +24,24 @@
   "context": [
     "docs/design-system.md"
   ],
+  "setup_commands": [
+    "npm ci"
+  ],
   "validation_commands": [
     "npm run lint",
     "npm run build"
   ],
-  "dependencies": [],
+  "allowed_commands": [
+    "npm run test -- --run"
+  ],
   "worker": {
-    "agent": "frontend-specialist",
+    "agent": "gb-frontend-coder",
     "effort": "high",
     "print_timeout": "30m"
   },
   "limits": {
     "max_retries": 2,
-    "max_rework_cycles": 3
+    "max_rework_cycles": 3,
+    "max_blocker_answers": 3
   }
 }

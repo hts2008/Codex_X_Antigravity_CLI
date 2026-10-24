@@ -1,33 +1,60 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gravitybridge.local/schemas/review.schema.json",
-  "title": "Codex Review Decision",
+  "title": "GravityBridge Codex Review",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "task_id", "decision", "blocking_findings", "non_blocking_findings"],
   "properties": {
-    "schema_version": { "const": "1.0" },
-    "task_id": { "type": "string" },
-    "decision": { "enum": ["ACCEPT", "REWORK", "REJECT", "TAKEOVER"] },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9_-]+)*$"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "ACCEPT",
+        "REWORK",
+        "REJECT",
+        "TAKEOVER"
+      ]
+    },
     "blocking_findings": {
+      "default": [],
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "non_blocking_findings": {
+      "default": [],
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
+    },
+    "override_reason": {
+      "description": "Required to ACCEPT while GravityBridge validation failed (e.g. failure pre-exists on base).",
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 2000
     },
     "quality": {
       "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "correctness": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "architecture": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "maintainability": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "tests": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "ux": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "visual_fidelity": { "type": "integer", "minimum": 0, "maximum": 100 }
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100
       }
     }
-  }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "decision"
+  ]
 }

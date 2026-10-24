@@ -1,236 +1,145 @@
-import path from "node:path";
-import { access } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
-import { cancelActiveWorker } from "./agy.js";
-import { assertGitRepository, taskDiff } from "./git.js";
-import { delegateAndWait, continueTask, retryTask } from "./orchestrator.js";
-import { executable, runProcess } from "./process.js";
-import { resultSchemaPath } from "./paths.js";
+import { healthChecks } from "./health.js";
 import {
-  loadTaskRecord,
-  readEvents,
-  readWorkerResult,
-  saveReview,
-  saveTaskRecord,
-} from "./store.js";
+  awaitTask, cancelTask, cleanupTask, continueTask, getTask, getTaskDiff, getTaskEvents, getWorkerResult, listTasks,
+  recordReview, retryTask, startTask,
+} from "./jobs.js";
 import { ReviewSchema, TaskContractSchema } from "./types.js";
 
-function createServer(): McpServer {
-  const server = new McpServer({
-    name: "gravitybridge",
-    version: "1.0.0",
-  });
+export const VERSION = "1.1.0";
 
 function response(value: unknown) {
-  const structured = typeof value === "object" && value !== null
-    ? value as Record<string, unknown>
-    : { value };
+  const structured = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : { value };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
     structuredContent: structured,
   };
 }
 
-server.registerTool(
-  "delegate_and_wait",
-  {
-    title: "Delegate task to Antigravity and wait",
-    description:
-      "Create an isolated Git worktree, execute one bounded Antigravity CLI task in headless stream-json mode, wait for its terminal result, persist evidence, and return control to Codex. Worker completion is not acceptance.",
-    inputSchema: z.object({
-      repo_path: z.string().min(1),
-      task: TaskContractSchema,
-    }),
-  },
-  async ({ repo_path, task }) => response(await delegateAndWait(repo_path, task)),
-);
+function failure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return { content: [{ type: "text" as const, text: `GravityBridge error: ${message}` }], isError: true };
+}
 
-server.registerTool(
-  "retry_task",
-  {
-    title: "Retry failed Antigravity execution",
-    description:
-      "Retry a WORKER_FAILED task in the same isolated worktree, optionally resuming the prior Antigravity conversation when one was captured. Enforces the Task Contract max_retries budget.",
-    inputSchema: z.object({
-      repo_path: z.string().min(1),
-      task_id: z.string().min(1),
-    }),
-  },
-  async ({ repo_path, task_id }) => response(await retryTask(repo_path, task_id)),
-);
-
-server.registerTool(
-  "continue_task",
-  {
-    title: "Continue Antigravity task with Codex feedback",
-    description:
-      "Resume the same Antigravity conversation and worktree for targeted rework after Codex review or a resolvable blocker. Preserves prior worker context.",
-    inputSchema: z.object({
-      repo_path: z.string().min(1),
-      task_id: z.string().min(1),
-      feedback: z.string().min(5).max(30_000),
-    }),
-  },
-  async ({ repo_path, task_id, feedback }) => response(await continueTask(repo_path, task_id, feedback)),
-);
-
-server.registerTool(
-  "get_task",
-  {
-    title: "Get GravityBridge task",
-    description: "Read the persisted orchestration metadata for one task.",
-    inputSchema: z.object({
-      repo_path: z.string().min(1),
-      task_id: z.string().min(1),
-    }),
-  },
-  async ({ repo_path, task_id }) => response(await loadTaskRecord(path.resolve(repo_path), task_id)),
-);
-
-server.registerTool(
-  "get_task_events",
-  {
-    title: "Get Antigravity execution events",
-    description:
-      "Read the tail of the persisted Antigravity stream-json event trace for a task. Use this when Codex needs execution evidence beyond the final worker result.",
-    inputSchema: z.object({
-      repo_path: z.string().min(1),
-      task_id: z.string().min(1),
-      tail: z.number().int().min(1).max(2000).default(200),
-    }),
-  },
-  async ({ repo_path, task_id, tail }) => response({
-    task_id,
-    events: await readEvents(path.resolve(repo_path), task_id, tail),
-  }),
-);
-
-server.registerTool(
-  "get_worker_result",
-  {
-    title: "Get worker result",
-    description:
-      "Read GravityBridge's persisted worker result bundle, including Antigravity terminal envelope, conversation ID, changed files, worktree status, and stderr.",
-    inputSchema: z.object({
-      repo_path: z.string().min(1),
-      task_id: z.string().min(1),
-    }),
-  },
-  async ({ repo_path, task_id }) => response(await readWorkerResult(path.resolve(repo_path), task_id)),
-);
-
-server.registerTool(
-  "get_task_diff",
-  {
-    title: "Get delegated task Git diff",
-    description:
-      "Return the current Git diff from the task's isolated worktree against its recorded base SHA. Codex should inspect this before accepting mutating work.",
-    inputSchema: z.object({
-      repo_path: z.string().min(1),
-      task_id: z.string().min(1),
-    }),
-  },
-  async ({ repo_path, task_id }) => {
-    const record = await loadTaskRecord(path.resolve(repo_path), task_id);
-    return response({
-      task_id,
-      base_sha: record.task.base_sha,
-      worktree_path: record.worktree_path,
-      changed_files: record.changed_files ?? [],
-      diff: await taskDiff(record.worktree_path, record.task.base_sha),
-    });
-  },
-);
-
-server.registerTool(
-  "record_review",
-  {
-    title: "Record Codex review decision",
-    description:
-      "Persist Codex's independent review decision. ACCEPT marks the task accepted but does not merge; REWORK enables continue_task; REJECT/TAKEOVER prevent further worker authority.",
-    inputSchema: z.object({
-      repo_path: z.string().min(1),
-      review: ReviewSchema,
-    }),
-  },
-  async ({ repo_path, review }) => {
-    const resolved = path.resolve(repo_path);
-    const record = await loadTaskRecord(resolved, review.task_id);
-
-    if (!["WORKER_COMPLETED", "BLOCKED", "REVIEW_PENDING", "CODEX_REVIEWING"].includes(record.state)) {
-      throw new Error(`Cannot record review for task ${review.task_id} from state ${record.state}.`);
-    }
-
-    if (review.decision === "ACCEPT") record.state = "ACCEPTED";
-    if (review.decision === "REWORK") record.state = "CHANGES_REQUESTED";
-    if (review.decision === "REJECT") record.state = "REJECTED";
-    if (review.decision === "TAKEOVER") record.state = "CODEX_TAKEOVER";
-
-    await saveReview(resolved, review.task_id, review);
-    await saveTaskRecord(record);
-    return response(record);
-  },
-);
-
-server.registerTool(
-  "cancel_task",
-  {
-    title: "Cancel active Antigravity worker",
-    description:
-      "Request cancellation of an active Antigravity child process for a task. Cancellation is best-effort and does not delete the worktree or partial changes.",
-    inputSchema: z.object({
-      repo_path: z.string().min(1),
-      task_id: z.string().min(1),
-    }),
-  },
-  async ({ repo_path, task_id }) => response({
-    task_id,
-    cancellation_requested: cancelActiveWorker(path.resolve(repo_path), task_id),
-  }),
-);
-
-server.registerTool(
-  "worker_health",
-  {
-    title: "Check GravityBridge worker health",
-    description:
-      "Check local prerequisites for orchestration without starting a model task: Git, Node, Antigravity CLI, target repository, and result schema availability.",
-    inputSchema: z.object({
-      repo_path: z.string().min(1),
-    }),
-  },
-  async ({ repo_path }) => {
-    const resolved = await assertGitRepository(path.resolve(repo_path));
-    const checks: Record<string, unknown> = { repo_path: resolved };
-
-    for (const name of ["git", "node", "agy"]) {
-      try {
-        const command = executable(name);
-        const r = await runProcess(command, ["--version"], { cwd: resolved, timeoutMs: 15_000 });
-        checks[name] = {
-          ok: r.code === 0,
-          version: (r.stdout || r.stderr).trim(),
-        };
-      } catch (error) {
-        checks[name] = { ok: false, error: error instanceof Error ? error.message : String(error) };
-      }
-    }
-
+/** Wrap a handler so expected errors come back as readable tool errors instead of protocol failures. */
+function safe<A>(fn: (args: A) => Promise<unknown>) {
+  return async (args: A) => {
     try {
-      await access(resultSchemaPath);
-      checks.result_schema = { ok: true, path: resultSchemaPath };
+      return response(await fn(args));
     } catch (error) {
-      checks.result_schema = { ok: false, path: resultSchemaPath, error: String(error) };
+      return failure(error);
     }
+  };
+}
 
-    return response(checks);
-  },
-);
+const repo = z.string().min(1).describe("Absolute path of the target Git repository (the main checkout, not the worktree).");
+const taskId = z.string().min(1);
+
+export function createServer(): McpServer {
+  const server = new McpServer({ name: "gravitybridge", version: VERSION });
+
+  server.registerTool("start_task", {
+    title: "Start an Antigravity coding task (async)",
+    description:
+      "Validate the Task Contract, create an isolated worktree on branch gb/<task_id> from the current clean HEAD, and start the Antigravity worker in the background. Returns immediately with state RUNNING. Then call await_task.",
+    inputSchema: z.object({ repo_path: repo, task: TaskContractSchema }),
+  }, safe(async ({ repo_path, task }) => await startTask(repo_path, task)));
+
+  server.registerTool("await_task", {
+    title: "Wait for a task to change state",
+    description:
+      "Long-poll up to wait_seconds (max 50) for a RUNNING task to finish. Returns a compact summary: state, next_action, changed files, scope violations, worker claims vs evidence, bridge validation results. Call repeatedly while state is RUNNING.",
+    inputSchema: z.object({ repo_path: repo, task_id: taskId, wait_seconds: z.number().int().min(0).max(50).default(45) }),
+  }, safe(async ({ repo_path, task_id, wait_seconds }) => await awaitTask(repo_path, task_id, wait_seconds)));
+
+  server.registerTool("continue_task", {
+    title: "Continue a task with Codex instructions",
+    description:
+      "Start the next worker turn in the same worktree/conversation. Use after record_review REWORK (state CHANGES_REQUESTED; feedback optional, defaults to blocking_findings) or to answer a BLOCKED worker (feedback required).",
+    inputSchema: z.object({ repo_path: repo, task_id: taskId, feedback: z.string().max(8_000).optional() }),
+  }, safe(async ({ repo_path, task_id, feedback }) => await continueTask(repo_path, task_id, feedback)));
+
+  server.registerTool("retry_task", {
+    title: "Retry a failed or canceled execution",
+    description:
+      "Re-run a WORKER_FAILED or CANCELED task in the same worktree. Enforces max_retries and refuses when the same failure repeated twice (then fix the cause or TAKEOVER).",
+    inputSchema: z.object({ repo_path: repo, task_id: taskId }),
+  }, safe(async ({ repo_path, task_id }) => await retryTask(repo_path, task_id)));
+
+  server.registerTool("cancel_task", {
+    title: "Cancel a running task",
+    description: "Stop the running worker turn (graceful, then forced after 15s). Keeps the worktree and partial changes.",
+    inputSchema: z.object({ repo_path: repo, task_id: taskId }),
+  }, safe(async ({ repo_path, task_id }) => await cancelTask(repo_path, task_id)));
+
+  server.registerTool("get_task", {
+    title: "Get task details",
+    description: "Full task status: contract essentials, all turns, last review, budgets, progress if running.",
+    inputSchema: z.object({ repo_path: repo, task_id: taskId }),
+  }, safe(async ({ repo_path, task_id }) => await getTask(repo_path, task_id)));
+
+  server.registerTool("list_tasks", {
+    title: "List tasks",
+    description: "List GravityBridge tasks (optionally for one repository) with state and next action. Use at session start to recover work.",
+    inputSchema: z.object({ repo_path: repo.optional(), include_closed: z.boolean().default(false) }),
+  }, safe(async ({ repo_path, include_closed }) => await listTasks(repo_path, include_closed)));
+
+  server.registerTool("get_task_diff", {
+    title: "Get the real Git diff of a task",
+    description:
+      "Diff from git evidence (includes new files). range=cumulative (base..branch) or last_turn; mode=stat (default, cheap) or full; optional path filter; output capped by max_bytes.",
+    inputSchema: z.object({
+      repo_path: repo, task_id: taskId,
+      range: z.enum(["cumulative", "last_turn"]).default("cumulative"),
+      mode: z.enum(["stat", "full"]).default("stat"),
+      path: z.string().optional(),
+      max_bytes: z.number().int().min(1_000).max(400_000).default(60_000),
+    }),
+  }, safe(async ({ repo_path, task_id, ...opts }) => await getTaskDiff(repo_path, task_id, opts)));
+
+  server.registerTool("get_task_events", {
+    title: "Get recent worker events",
+    description: "Tail of the Antigravity stream-json event log (for debugging failures or watching progress).",
+    inputSchema: z.object({
+      repo_path: repo, task_id: taskId,
+      count: z.number().int().min(1).max(500).default(40),
+      max_bytes: z.number().int().min(1_000).max(200_000).default(30_000),
+    }),
+  }, safe(async ({ repo_path, task_id, count, max_bytes }) => await getTaskEvents(repo_path, task_id, count, max_bytes)));
+
+  server.registerTool("get_worker_result", {
+    title: "Get a full turn result",
+    description: "Full evidence of one turn (default: latest): worker structured result, setup/validation output, claim checks, permission notices.",
+    inputSchema: z.object({ repo_path: repo, task_id: taskId, turn: z.number().int().min(1).optional() }),
+  }, safe(async ({ repo_path, task_id, turn }) => await getWorkerResult(repo_path, task_id, turn)));
+
+  server.registerTool("record_review", {
+    title: "Record the Codex review decision",
+    description:
+      "ACCEPT (blocked if scope violations; needs override_reason if bridge validation failed), REWORK (needs blocking_findings; then continue_task), REJECT, or TAKEOVER. Worker completion is never acceptance.",
+    inputSchema: z.object({ repo_path: repo, review: ReviewSchema }),
+  }, safe(async ({ repo_path, review }) => await recordReview(repo_path, review)));
+
+  server.registerTool("cleanup_task", {
+    title: "Remove a finished task's worktree",
+    description:
+      "For ACCEPTED/REJECTED/CODEX_TAKEOVER tasks: remove the worktree. Keeps the branch unless delete_branch=true (only delete after integrating). Evidence files are kept.",
+    inputSchema: z.object({ repo_path: repo, task_id: taskId, delete_branch: z.boolean().default(false) }),
+  }, safe(async ({ repo_path, task_id, delete_branch }) => await cleanupTask(repo_path, task_id, delete_branch)));
+
+  server.registerTool("worker_health", {
+    title: "Check GravityBridge health",
+    description: "Check prerequisites without running a model: Node, Git, Antigravity CLI, plugin, scope hook, state dir, optional target repo.",
+    inputSchema: z.object({ repo_path: repo.optional() }),
+  }, safe(async ({ repo_path }) => await healthChecks(repo_path)));
 
   return server;
 }
 
-void serveStdio(createServer);
-console.error("GravityBridge MCP server running on stdio");
+const invokedDirectly = process.argv[1] && /index\.(js|ts)$/.test(process.argv[1]);
+if (invokedDirectly) {
+  void serveStdio(createServer);
+  console.error(`GravityBridge MCP server ${VERSION} running on stdio`);
+}

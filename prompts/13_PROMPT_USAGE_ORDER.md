@@ -20,7 +20,7 @@ GB-H04 DAILY_WORK
         |
         +--> Codex direct work
         |
-        +--> GravityBridge delegate_and_wait
+        +--> GravityBridge start_task -> await_task (repeat)
                  |
                  +--> WORKER_COMPLETED
                  |      -> GB-C-REVIEW
@@ -54,7 +54,7 @@ GB-H08 SESSION_CLOSE
 | Worker/project state | Codex action |
 |---|---|
 | No delegation needed | Codex direct |
-| Specialist task useful | `delegate_and_wait` |
+| Bounded coding task useful | `start_task`, then `await_task` until not RUNNING |
 | `WORKER_COMPLETED` | independent review |
 | Review = REWORK | `record_review(REWORK)` then `continue_task` |
 | `WORKER_FAILED`, transient | `retry_task` |

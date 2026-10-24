@@ -1,11 +1,11 @@
 {
   "name": "codex-antigravity-orchestrator",
-  "version": "1.0.0",
-  "description": "Orchestrate Antigravity CLI specialist workers through GravityBridge with deterministic completion, Git isolation, review, and rework.",
+  "version": "1.1.0",
+  "description": "Codex decides, Antigravity CLI codes: async GravityBridge MCP loop with Git isolation, scope enforcement, independent validation, review and rework.",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Codex × Antigravity Orchestrator",
-    "shortDescription": "Delegate bounded specialist tasks to Antigravity CLI and independently review the result."
+    "shortDescription": "Delegate bounded coding tasks to Antigravity CLI and independently review the evidence."
   }
 }

@@ -17,7 +17,7 @@ Treat those files as normative in that order. If implementation and documentatio
 ## Role assignment
 
 - Codex is the Lead Engineer and Orchestrator.
-- Antigravity CLI is a specialist worker.
+- Antigravity CLI is a coding worker only (agents `gb-coder`, `gb-frontend-coder`): it implements, it never decides.
 - GravityBridge is a deterministic coordination mechanism, not an engineering decision-maker.
 - Antigravity worker success is never equivalent to Codex acceptance.
 
@@ -26,14 +26,14 @@ Treat those files as normative in that order. If implementation and documentatio
 1. Inspect the target repository yourself first.
 2. If this is the first attachment of the target project, apply the project bootstrap protocol and create/update `docs/GRAVITYBRIDGE/`.
 3. At fresh-session start, recover `PROJECT_PROFILE.md`, `CURRENT_STATE.md`, `SESSION_HANDOFF.md`, recent decisions/tasks, and actual Git state before material work.
-4. Run or request the GravityBridge doctor/setup workflow if environment readiness is unknown.
+4. If environment readiness is unknown, call `worker_health` (or ask the human to run `scripts/doctor`).
 5. Delegate only bounded tasks with explicit acceptance criteria and path scope.
-6. Prefer isolated Git worktrees for mutating delegated tasks.
-7. After every worker completion, independently inspect the codebase and diff.
+6. Commit or stash first: `start_task` requires a clean repo and creates an isolated worktree on branch `gb/<task_id>`. Then loop `await_task` until the state is not RUNNING.
+7. After every worker completion, check `scope_violations`, `bridge_validation`, `claim_mismatches`, then read the real diff (`get_task_diff`).
 8. Run appropriate tests/build/lint/typecheck yourself when feasible.
-9. Use `continue_task` for targeted rework so the same Antigravity conversation is resumed.
+9. For targeted rework: `record_review(REWORK, blocking_findings)` then `continue_task`, so the same Antigravity conversation is resumed.
 10. Use `retry_task` only for execution failure, not implementation-quality rework.
-11. Integrate only after independent acceptance.
+11. Integrate only after `record_review(ACCEPT)`: `git merge --squash gb/<task_id>`, verify, commit, then `cleanup_task`.
 12. For material multi-session work, keep target `docs/GRAVITYBRIDGE/CURRENT_STATE.md`, `TASK_LEDGER.md`, and `SESSION_HANDOFF.md` factual and recoverable.
 
 ## Safety
@@ -42,3 +42,8 @@ Do not enable `--dangerously-skip-permissions` by default.
 Do not grant Antigravity merge/push authority by default.
 Do not let Codex and Antigravity concurrently edit the same working tree.
 Do not infer worker completion from prose; rely on GravityBridge terminal-result handling.
+Do not edit a task worktree yourself while its task is RUNNING.
+
+## Changing this repository
+
+Run `npm run typecheck && npm run build && npm test` in `packages/gravitybridge`. After editing `src/types.ts`, run `npm run gen:schemas`.

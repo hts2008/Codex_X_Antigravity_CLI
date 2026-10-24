@@ -1,34 +1,14 @@
 #!/usr/bin/env bash
+# One-time (and after every git pull) setup: build GravityBridge and register it with Antigravity + Codex.
+# Options are passed to the installer: --skip-agy, --skip-codex, --dry-run
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BRIDGE="$ROOT/packages/gravitybridge"
-PLUGIN="$ROOT/antigravity-plugin/codex-worker"
-
-require() {
-  command -v "$1" >/dev/null 2>&1 || { echo "[FAIL] Missing required command: $1" >&2; exit 1; }
-  echo "[OK] $1 -> $(command -v "$1")"
-}
-
-echo "== GravityBridge setup =="
-require git
-require node
-require npm
-require agy
-
+for c in git node npm; do
+  command -v "$c" >/dev/null 2>&1 || { echo "[FAIL] Missing required command: $c" >&2; exit 1; }
+done
+echo "== Building GravityBridge =="
 cd "$BRIDGE"
-if [[ -f package-lock.json ]]; then
-  npm ci
-else
-  npm install
-fi
+npm ci --no-audit --no-fund
 npm run build
-npm run typecheck
-
-if [[ "${1:-}" != "--skip-antigravity-plugin" ]]; then
-  echo "[info] Installing Antigravity plugin: codex-worker"
-  agy plugin install "$PLUGIN" || echo "[WARN] Plugin install failed; it may already exist. Reinstall/update it manually if needed."
-fi
-
-echo "Setup completed."
-echo "Next: $ROOT/scripts/doctor.sh"
+node "$BRIDGE/dist/install.js" "$@"

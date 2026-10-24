@@ -7,8 +7,8 @@ Apply this contract to all Human → Codex lifecycle prompts in this directory.
 - Human = Product Owner / priority and irreversible business decision authority.
 - Codex = Lead Engineer / Orchestrator / independent reviewer / integration authority.
 - GravityBridge = deterministic process, state, Git-isolation, and evidence layer.
-- Antigravity CLI = bounded specialist worker.
-- Antigravity custom agents = specialist execution roles under the delegated task.
+- Antigravity CLI = bounded coding worker (implements only; makes no product/architecture decisions).
+- Antigravity custom agents = `gb-coder` / `gb-frontend-coder` coding roles under the delegated task.
 
 No actor may silently assume another actor's authority.
 

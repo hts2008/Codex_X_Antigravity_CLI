@@ -2,7 +2,7 @@
 
 **Status:** Architecture baseline  
 **Version:** 1.0.0-draft  
-**Primary role model:** Codex = Lead Engineer / Orchestrator; Antigravity CLI = Specialist Worker; GravityBridge = deterministic coordination layer.
+**Primary role model:** Codex = Lead Engineer / Orchestrator; Antigravity CLI = Coding Worker (implements only what Codex specifies); GravityBridge = deterministic coordination layer.
 
 ---
 
@@ -20,8 +20,8 @@ The framework is designed around three authorities:
    - Decides whether work is accepted, reworked, rejected, or taken over.
    - Owns final integration.
 
-2. **Antigravity CLI owns specialist execution.**
-   - Runs bounded specialist tasks.
+2. **Antigravity CLI owns code implementation only.**
+   - Implements bounded coding tasks exactly as specified by Codex.
    - May inspect and modify files only inside the delegated workspace/scope.
    - Uses custom agents, skills, tools, subagents, and MCP where useful.
    - Produces a machine-readable result contract.
@@ -134,9 +134,9 @@ flowchart TB
 | Understand product objective | Owner | No | Context only |
 | Understand target repo architecture | Owner | Metadata only | Task-scoped |
 | Decompose work | Owner | No | Optional subtasking inside task |
-| Select specialist worker | Owner | Enforce request | Execute |
+| Select worker agent | Owner | Enforce request | Execute |
 | Create isolated worktree | Request | Owner | Consume |
-| Execute specialist task | Optional | Launch/monitor | Owner |
+| Implement coding task | Optional | Launch/monitor | Owner |
 | Track process completion | Observe | Owner | Emit protocol result |
 | Persist event trace | Read | Owner | Emit |
 | Review implementation | Owner | Provide evidence | No |
@@ -148,42 +148,42 @@ flowchart TB
 
 ## 5. Task lifecycle
 
+The implemented state machine (single source of truth: `packages/gravitybridge/src/state.ts`):
+
 ```mermaid
 stateDiagram-v2
     [*] --> CREATED
-    CREATED --> DISPATCHED
-    DISPATCHED --> RUNNING
+    CREATED --> RUNNING: start_task
 
-    RUNNING --> BLOCKED
     RUNNING --> WORKER_COMPLETED
+    RUNNING --> BLOCKED
     RUNNING --> WORKER_FAILED
-    RUNNING --> CANCELED
+    RUNNING --> CANCELED: cancel_task
 
-    BLOCKED --> RUNNING: answer_blocker
-    BLOCKED --> CANCELED
+    WORKER_COMPLETED --> ACCEPTED: record_review ACCEPT
+    WORKER_COMPLETED --> CHANGES_REQUESTED: record_review REWORK
+    WORKER_COMPLETED --> REJECTED: record_review REJECT
+    WORKER_COMPLETED --> CODEX_TAKEOVER: record_review TAKEOVER
+
+    BLOCKED --> RUNNING: continue_task (answer)
+    BLOCKED --> CHANGES_REQUESTED
+    BLOCKED --> REJECTED
     BLOCKED --> CODEX_TAKEOVER
 
-    WORKER_FAILED --> RUNNING: retry
+    WORKER_FAILED --> RUNNING: retry_task
+    WORKER_FAILED --> REJECTED
     WORKER_FAILED --> CODEX_TAKEOVER
-    WORKER_FAILED --> CANCELED
 
-    WORKER_COMPLETED --> REVIEW_PENDING
-    REVIEW_PENDING --> CODEX_REVIEWING
+    CANCELED --> RUNNING: retry_task
+    CANCELED --> REJECTED
+    CANCELED --> CODEX_TAKEOVER
 
-    CODEX_REVIEWING --> ACCEPTED
-    CODEX_REVIEWING --> CHANGES_REQUESTED
-    CODEX_REVIEWING --> REJECTED
-
-    CHANGES_REQUESTED --> RUNNING: continue_task
-    REJECTED --> CODEX_TAKEOVER
-
-    ACCEPTED --> INTEGRATING
-    INTEGRATING --> VERIFIED
-    VERIFIED --> MERGED
-    MERGED --> DONE
-
-    CODEX_TAKEOVER --> VERIFIED
+    CHANGES_REQUESTED --> RUNNING: continue_task (rework)
+    CHANGES_REQUESTED --> REJECTED
+    CHANGES_REQUESTED --> CODEX_TAKEOVER
 ```
+
+`ACCEPTED`, `REJECTED` and `CODEX_TAKEOVER` are terminal for the worker. Integration (squash-merge, verification, commit) is done by Codex in the main checkout and is not a GravityBridge state.
 
 ### Terminal worker states
 
@@ -239,8 +239,10 @@ Example:
     "docs/design-system.md",
     "docs/erp-domain.md"
   ],
+  "setup_commands": ["npm ci"],
+  "validation_commands": ["npm run lint", "npm run build"],
   "worker": {
-    "agent": "frontend-specialist",
+    "agent": "gb-frontend-coder",
     "effort": "high"
   },
   "limits": {
@@ -449,93 +451,61 @@ Rules:
 
 ## 14. MCP surface
 
-V1 should expose a small bounded toolset:
+Small, explicit toolset (all calls return within ~50 s; the worker runs in a detached runner process):
 
 ### Execution
 
-- `delegate_and_wait`
-- `retry_task`
-- `continue_task`
-- `cancel_task`
+- `start_task` – create worktree `gb/<task_id>` from the clean HEAD, start turn 1 in the background
+- `await_task` – long-poll (≤ 50 s) until the state changes; returns the evidence summary
+- `continue_task` – next turn after REWORK (CHANGES_REQUESTED) or to answer a BLOCKED worker
+- `retry_task` – re-run after WORKER_FAILED / CANCELED (budget + same-failure guard)
+- `cancel_task` – graceful then forced stop
+- `record_review` – ACCEPT / REWORK / REJECT / TAKEOVER (ACCEPT is guarded)
+- `cleanup_task` – remove the worktree of a finished task
 
 ### Inspection
 
-- `get_task`
-- `get_task_events`
-- `get_task_diff`
-- `get_worker_result`
+- `get_task`, `list_tasks`, `get_task_diff` (cumulative or last turn, stat or full), `get_task_events`, `get_worker_result`, `worker_health`
 
-### Optional V1.1
-
-- `list_tasks`
-- `answer_blocker`
-- `worker_health`
-- `cleanup_task`
-
-Avoid a generic `antigravity_do_everything` tool. Each tool should have explicit semantics and bounded side effects.
+Avoid a generic `antigravity_do_everything` tool. Each tool has explicit semantics and bounded side effects.
 
 ---
 
-## 15. Synchronous V1
+## 15. Asynchronous V1.1 control loop
 
-The first implementation intentionally favors synchronous delegation:
+V1.0 used a synchronous `delegate_and_wait` that blocked for up to 30 minutes. Codex's default MCP tool timeout is 60 s, so long tasks failed on the Codex side. V1.1 replaces it with an async loop:
 
 ```text
-Codex
-  |
-  | delegate_and_wait(task)
-  v
-GravityBridge
-  |
-  | spawn Antigravity
-  v
-Antigravity working
-  |
-  | terminal result
-  v
-GravityBridge captures evidence
-  |
-  | MCP tool returns
-  v
-Codex immediately resumes review
+Codex --start_task--> GravityBridge --spawn (detached)--> runner --> agy -p ... --output-format stream-json
+Codex --await_task (repeat)--> GravityBridge reads task state  <-- runner writes evidence + final state
 ```
 
-This solves the core requirement—“when Antigravity finishes, Codex knows and continues”—without requiring a background wake-up service.
+The runner survives Codex/MCP restarts. If it dies (crash, reboot), the next `await_task`/`list_tasks` reconciles the task to `WORKER_FAILED` instead of leaving it RUNNING forever.
 
 ---
 
-## 16. Asynchronous V2
+## 16. Evidence and enforcement
 
-A future supervisor can use Codex app-server to wake and resume a Codex thread after an asynchronous worker completion event.
+After every turn GravityBridge (not the worker):
 
-Conceptual flow:
+1. snapshots the worktree into a commit (`git add -A`), so the diff contains **new files** too;
+2. checks every changed path against `allowed_paths` / `forbidden_paths` / protected paths;
+3. compares the worker's claims (`task_id`, `files_changed`) with git;
+4. re-runs `validation_commands` itself;
+5. validates the structured result strictly (invalid → `WORKER_FAILED`).
 
-```text
-GravityBridge task.completed
-        |
-        v
-Supervisor
-        |
-        | thread/resume + turn/start
-        v
-Codex review turn
-```
-
-V2 is deliberately outside the V1 critical path.
+Before a tool runs, an Antigravity `PreToolUse` hook (`dist/hook.js`, registered in `~/.gemini/config/hooks.json`) denies writes outside scope and mutating git commands, and auto-approves the task's validation/allowed commands. Outside GravityBridge worktrees the hook does nothing.
 
 ---
 
-## 17. Specialist worker model
+## 17. Worker agents
 
-Recommended Antigravity agents:
+The Antigravity plugin `codex-worker` provides only coding workers:
 
-- `erp-ux-researcher`
-- `ui-designer`
-- `frontend-specialist`
-- `design-system-specialist`
-- `visual-qa`
+- `gb-coder` – general implementation (default)
+- `gb-frontend-coder` – UI implementation that follows existing design conventions
 
-The specialist set is extensible. Agent selection belongs to Codex.
+Design/UX research, architecture and visual review are Codex responsibilities, not worker roles. Agent selection belongs to Codex.
 
 ---
 
@@ -617,7 +587,7 @@ This provides a useful audit trail for Codex and humans.
 | L1 Codex Intelligence | planning, architecture, delegation, review |
 | L2 Orchestration Protocol | contracts, lifecycle, retry/rework policy |
 | L3 GravityBridge MCP | deterministic coordination and tools |
-| L4 Antigravity Runtime | specialist execution |
+| L4 Antigravity Runtime | code implementation |
 | L5 Git Isolation | worktrees, branches, diff boundaries |
 | L6 Observability | state, events, logs, metrics, audit artifacts |
 
@@ -625,34 +595,24 @@ This provides a useful audit trail for Codex and humans.
 
 ## 22. Recommended implementation phases
 
-### Phase 1 — GravityBridge V1
+### Phase 1 — V1.1 (implemented)
 
-- Codex plugin/skills
-- local MCP bridge
-- synchronous `delegate_and_wait`
-- Antigravity headless execution
-- schema-constrained worker output
-- Git worktree isolation
-- event/result persistence
-- Codex review and rework workflow
-- Windows-first bootstrap plus macOS/Linux scripts
+- async MCP loop (`start_task` / `await_task`), detached runner, orphan reconciliation
+- snapshot-commit evidence, scope enforcement (hook + post-check), claim checks, bridge-run validation
+- explicit state machine, budgets, same-failure guard, parallel limit
+- coding-only worker agents, cross-platform installer / doctor / smoke test, CI on Linux + Windows
 
-### Phase 2 — Persistent Antigravity sessions
+### Phase 2 — Hardening with real usage
 
-- streaming prompts over stdin
-- persistent process/session manager
-- live progress
-- blocker callback support
-- richer worker health
+- tune hook/permission policy from real smoke-test results
+- richer progress, cost/usage reporting
 
 ### Phase 3 — Autonomous supervisor
 
-- Codex app-server
-- asynchronous task queue
-- automatic thread resume
-- DAG scheduler
-- parallel independent workers
-- dependency-aware integration
+- Codex app-server thread resume on completion
+- DAG scheduler and dependency-aware integration
+
+See `docs/IMPROVEMENT_PLAN.md`.
 
 ---
 

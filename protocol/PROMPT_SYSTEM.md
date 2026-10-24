@@ -103,7 +103,7 @@ flowchart TD
     P --> D{Delegate?}
     D -->|No| CD[Codex direct implementation]
     D -->|Yes| GB[GravityBridge Task Contract]
-    GB --> A[Antigravity specialist]
+    GB --> A[Antigravity coding worker]
     A --> R[Terminal result + evidence]
     R --> CR[Codex independent review]
     CR --> V{Decision}

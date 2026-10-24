@@ -1,454 +1,116 @@
-# GravityBridge Technical Specification V1
+# GravityBridge Technical Specification V1.1
 
-**Version:** 1.0.0  
-**Status:** Implemented baseline  
-**Normative language:** The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are to be interpreted as requirement levels.
+Status: normative for `packages/gravitybridge` 1.1.x. (File name kept for link stability.)
+Single sources of truth in code: states/transitions `src/state.ts`, contracts `src/types.ts` (JSON Schemas in `schemas/` are generated from it: `npm run gen:schemas`).
 
 ## 1. Objective
 
-GravityBridge V1 provides deterministic synchronous orchestration between Codex and Antigravity CLI.
-
-The primary requirement is:
-
-> When Antigravity finishes a delegated task, Codex must receive a machine-detectable completion result and immediately regain control with sufficient evidence to independently review the work.
-
-V1 deliberately avoids GUI automation and does not require a background Codex wake-up service.
+Let Codex delegate bounded **coding** tasks to Antigravity CLI and get back verifiable evidence, without ever giving the worker decision, merge or push authority, and without blocking Codex tool calls for longer than its MCP timeout.
 
 ## 2. Actors
 
-### 2.1 Codex
-
-Codex MUST be treated as the Lead Engineer / Orchestrator.
-
-Codex owns:
-
-- repository-level understanding;
-- architecture decisions;
-- task decomposition;
-- worker selection;
-- acceptance criteria;
-- post-worker review;
-- retry/rework decisions;
-- final integration.
-
-### 2.2 Antigravity CLI
-
-Antigravity is a specialist execution runtime.
-
-Antigravity MAY:
-
-- inspect the assigned worktree;
-- modify files inside delegated scope;
-- run allowed commands;
-- use its tools, skills, agents, subagents, and MCP servers;
-- report blockers;
-- self-validate.
-
-Antigravity MUST NOT be treated as final acceptance authority.
-
-### 2.3 GravityBridge
-
-GravityBridge is a local MCP server.
-
-It owns:
-
-- task persistence;
-- worktree creation;
-- Antigravity process launch;
-- stream event capture;
-- terminal result detection;
-- conversation ID persistence;
-- evidence capture;
-- task state persistence.
-
-It MUST NOT make product or architecture judgments.
+| Actor | Owns | Never does |
+|---|---|---|
+| Codex (Lead Engineer) | decisions, Task Contract, review, integration | edit a worktree while its task is RUNNING |
+| Antigravity CLI (`gb-coder`, `gb-frontend-coder`) | implementing the contract inside its worktree | decide scope/design, write outside scope, run mutating git, accept its own work |
+| GravityBridge | worktrees, state machine, evidence, enforcement, budgets | make engineering decisions |
 
 ## 3. Transport
 
-V1 uses MCP stdio between Codex and GravityBridge.
+- Codex ↔ GravityBridge: MCP over stdio (`dist/index.js`). Every tool returns in ≤ ~50 s (Codex default `tool_timeout_sec` is 60 s).
+- GravityBridge → runner: detached Node process `dist/runner.js <repo> <task_id> <turn>` per turn; survives MCP/Codex restarts.
+- Runner → Antigravity: `agy -p <prompt> --output-format stream-json --json-schema schemas/result.schema.json --agent <agent> --effort <e> --print-timeout <t> [--model m] [--conversation <id>]`, cwd = worktree, sanitized env (secrets such as `OPENAI_*`, `GH_*`, `*TOKEN*` removed).
+- Antigravity → GravityBridge (before each write/command): global `PreToolUse` hook `dist/hook.js`.
 
-GravityBridge launches Antigravity CLI with:
+## 4. Completion protocol
 
-```text
-agy -p <prompt>
-    --output-format stream-json
-    --json-schema <result.schema.json>
-    --effort <low|medium|high>
-    --agent <agent>
-    --print-timeout <duration>
+The runner reads stream-json: `init` (conversation_id) → `step_update`* → `result`. A turn is successful only if: exit code 0, `result.status == "SUCCESS"`, and `structured_output` passes strict validation of the Result Contract. Anything else → `WORKER_FAILED` with a diagnostic (`no terminal result`, `status X`, `structured result invalid`, `spawn failed`, `watchdog`).
+
+Watchdog: `print_timeout + 2 min` kills the worker. Hard deadline (`active_run.deadline_at` = print_timeout + setup + validation + 10 min) lets the MCP server kill a stuck runner.
+
+## 5. Async control loop
+
+```
+start_task ──> CREATED ──> RUNNING ──(runner finishes)──> WORKER_COMPLETED | BLOCKED | WORKER_FAILED | CANCELED
+await_task  (long-poll ≤ 50 s; repeat while RUNNING; returns progress: elapsed, steps, last tool)
 ```
 
-Optional:
+Reconciliation (on every read): if `run.json` exists but its pid is dead, or is missing > 60 s after start, or the hard deadline passed, the task becomes `WORKER_FAILED` (or `CANCELED` if a cancel was requested). A task can never stay RUNNING forever. The runner always writes the final record **before** deleting `run.json`.
 
-```text
---model <model>
---conversation <conversation_id>
-```
-
-GravityBridge MUST NOT add `--dangerously-skip-permissions` by default.
-
-## 4. Antigravity completion protocol
-
-Antigravity headless streaming output is treated as NDJSON.
-
-The expected high-level sequence is:
-
-```text
-init
-step_update*
-result
-```
-
-GravityBridge MUST identify completion from the terminal `result` event, not from natural-language output.
-
-A worker turn is successful at the process layer only when:
-
-1. a terminal result event is observed;
-2. process exit code is 0;
-3. terminal envelope status is `SUCCESS`;
-4. schema-constrained `structured_output` exists;
-5. structured output declares `worker_status` as `completed` or `blocked`.
-
-Mapping:
-
-| Antigravity/process outcome | GravityBridge state |
-|---|---|
-| SUCCESS + worker_status=completed | WORKER_COMPLETED |
-| SUCCESS + worker_status=blocked | BLOCKED |
-| Missing terminal result | WORKER_FAILED |
-| Non-zero exit | WORKER_FAILED |
-| ERROR / INVALID / INTERRUPTED | WORKER_FAILED |
-| cancellation request terminates child | CANCELED or WORKER_FAILED depending observed terminal evidence |
-
-V1 currently records best-effort cancellation and does not guarantee a process-tree kill on every operating system.
-
-## 5. Synchronous control loop
-
-```mermaid
-sequenceDiagram
-    participant C as Codex
-    participant B as GravityBridge
-    participant G as Git
-    participant A as Antigravity CLI
-
-    C->>B: delegate_and_wait(repo_path, task)
-    B->>G: validate clean repo + base SHA
-    B->>G: create branch/worktree
-    B->>A: spawn headless task
-    A-->>B: init
-    A-->>B: step_update*
-    A-->>B: terminal result
-    B->>G: capture diff + changed files
-    B-->>C: TaskRecord + terminal evidence
-    C->>B: get_task_diff / get_worker_result
-    C->>C: independent review
-    alt accept
-      C->>B: record_review(ACCEPT)
-    else rework
-      C->>B: record_review(REWORK)
-      C->>B: continue_task(feedback)
-      B->>A: --conversation previous_id
-    else reject
-      C->>B: record_review(REJECT/TAKEOVER)
-    end
-```
+Parallelism: at most `GRAVITYBRIDGE_MAX_PARALLEL` (default 2) RUNNING tasks across all repos.
 
 ## 6. Git model
 
-V1 requires a clean target working tree before initial delegation.
-
-Reason: a new worktree is created from a commit SHA and cannot automatically include uncommitted Codex changes. Requiring cleanliness prevents hidden divergence between Codex context and worker context.
-
-Initial delegation MUST verify that `task.base_sha` matches repository HEAD.
-
-Worktrees are stored outside the target repository:
-
-```text
-~/.gravitybridge/
-├── tasks/<repo-key>/<task-id>/
-└── worktrees/<repo-key>/<task-id>/
-```
-
-Branch naming:
-
-```text
-gb/<task-id>
-```
-
-Antigravity MUST NOT merge or push by default.
+- `start_task` requires a clean repo; `base_sha` (optional) must equal HEAD. Worktree `~/.gravitybridge/worktrees/<repo_key>/<task_id>` on new branch `gb/<task_id>`. Existing path/branch/task id → error; **nothing is ever deleted implicitly**.
+- After every turn the runner commits everything (`git add -A`, author GravityBridge, hooks disabled) → evidence includes new and deleted files. Turn diff = `head_before..head_after`; cumulative diff = `base_sha..gb/<task_id>`.
+- Worker commits or branch switches are recorded as `git_violations` (branch switch → `WORKER_FAILED`).
+- Integration is done by Codex: `git merge --squash gb/<task_id>` in the main checkout, verify, commit, then `cleanup_task`.
 
 ## 7. Persistence
 
-Per-task files:
+`~/.gravitybridge/tasks/<repo_key>/<task_id>/` (override with `GRAVITYBRIDGE_HOME`):
+`metadata.json` (TaskRecord), `task.json`, `prompts/<n>.md`, `turns/<n>.json` + `turns/<n>.diff`, `result.json` (latest turn), `events.ndjson` (capped 20 MB), `stderr.log`, `runner.log`, `hook.log`, `reviews/<n>.json`, transient `run.json`, `cancel.request`. All JSON writes are atomic (temp + rename).
 
-```text
-~/.gravitybridge/tasks/<repo-key>/<task-id>/
-├── task.json
-├── metadata.json
-├── prompt.md
-├── events.ndjson
-├── stderr.log
-├── result.json
-├── diff.patch
-└── review.json
-```
+## 8. States and transitions
 
-The event trace SHOULD preserve raw Antigravity stream-json lines.
-
-## 8. Task states
-
-Implemented V1 states:
-
-- CREATED
-- DISPATCHED
-- RUNNING
-- BLOCKED
-- WORKER_COMPLETED
-- WORKER_FAILED
-- CANCELED
-- REVIEW_PENDING
-- CODEX_REVIEWING
-- ACCEPTED
-- CHANGES_REQUESTED
-- REJECTED
-- CODEX_TAKEOVER
-- INTEGRATING
-- VERIFIED
-- MERGED
-- DONE
-
-Not every integration state is automatically transitioned in V1. Integration remains Codex-owned.
-
-## 9. MCP tool contract
-
-### 9.1 delegate_and_wait
-
-Side effects:
-
-- validates target Git repository;
-- requires clean working tree;
-- validates base SHA;
-- creates branch and worktree;
-- writes task metadata;
-- launches Antigravity;
-- waits for terminal result;
-- stores events/result/diff;
-- returns TaskRecord.
-
-This tool is intentionally synchronous.
-
-### 9.2 retry_task
-
-Requirements:
-
-- task exists;
-- current state is `WORKER_FAILED`;
-- retry budget is not exhausted.
-
-Behavior:
-
-- increments the execution retry counter;
-- reuses the same isolated worktree;
-- resumes the prior conversation when a conversation ID was captured;
-- preserves valid partial work;
-- re-executes the original bounded task;
-- captures new terminal evidence.
-
-A retry is for execution failure. It MUST NOT be used as a substitute for Codex review/rework.
-
-### 9.3 continue_task
-
-Requirements:
-
-- task exists;
-- prior conversation ID exists;
-- current state permits rework/blocker continuation;
-- rework budget is not exhausted.
-
-Behavior:
-
-- resumes same Antigravity conversation with `--conversation`;
-- reuses same worktree;
-- sends targeted Codex feedback;
-- captures a new terminal result;
-- updates the same task record.
-
-### 9.4 get_task
-
-Read-only task metadata lookup.
-
-### 9.5 get_task_events
-
-Read-only tail of raw NDJSON worker events.
-
-### 9.6 get_worker_result
-
-Read-only persisted result bundle.
-
-### 9.7 get_task_diff
-
-Read-only current task diff against recorded base SHA.
-
-### 9.8 record_review
-
-Persists Codex's independent decision.
-
-Mapping:
-
-| Decision | State |
+| From | Allowed to |
 |---|---|
-| ACCEPT | ACCEPTED |
-| REWORK | CHANGES_REQUESTED |
-| REJECT | REJECTED |
-| TAKEOVER | CODEX_TAKEOVER |
+| CREATED | RUNNING |
+| RUNNING | WORKER_COMPLETED, BLOCKED, WORKER_FAILED, CANCELED |
+| WORKER_COMPLETED | ACCEPTED, CHANGES_REQUESTED, REJECTED, CODEX_TAKEOVER |
+| BLOCKED | RUNNING (answer), CHANGES_REQUESTED, REJECTED, CODEX_TAKEOVER |
+| WORKER_FAILED | RUNNING (retry), REJECTED, CODEX_TAKEOVER |
+| CANCELED | RUNNING (retry), REJECTED, CODEX_TAKEOVER |
+| CHANGES_REQUESTED | RUNNING (rework), REJECTED, CODEX_TAKEOVER |
+| ACCEPTED, REJECTED, CODEX_TAKEOVER | — (terminal; only `cleanup_task`) |
 
-ACCEPT does not merge.
+Every tool response includes `next_action`.
 
-### 9.9 cancel_task
+## 9. MCP tools
 
-Best-effort cancellation of an active child process.
+| Tool | Input | Effect / guard |
+|---|---|---|
+| `start_task` | repo_path, task | clean repo, new task_id, worktree, turn 1 in background |
+| `await_task` | repo_path, task_id, wait_seconds≤50 | summary when state ≠ RUNNING, else progress |
+| `continue_task` | repo_path, task_id, feedback? | CHANGES_REQUESTED → rework turn (feedback defaults to blocking_findings); BLOCKED → answer turn (feedback required, `max_blocker_answers`) |
+| `retry_task` | repo_path, task_id | WORKER_FAILED/CANCELED; `max_retries`; refused when the same failure signature occurred 2× in a row |
+| `cancel_task` | repo_path, task_id | cancel file → graceful stop ≤ 15 s → kill process trees → CANCELED |
+| `record_review` | repo_path, review | ACCEPT refused with scope violations; ACCEPT with failed bridge validation needs `override_reason`; REWORK needs blocking_findings and `max_rework_cycles` budget |
+| `cleanup_task` | repo_path, task_id, delete_branch=false | terminal states only; removes worktree, keeps evidence |
+| `get_task`, `list_tasks` | | status, turns, budgets, last review; recovery after restart |
+| `get_task_diff` | range cumulative/last_turn, mode stat/full, path, max_bytes | from git, capped |
+| `get_worker_result` | turn? | full turn evidence |
+| `get_task_events` | count, max_bytes | tail of the event log |
+| `worker_health` | repo_path? | Node ≥ 22, git, agy, plugin, hook registration, state dir, target repo cleanliness |
 
-### 9.10 worker_health
+## 10. Evidence computed per turn (TurnSummary)
 
-Checks prerequisites without consuming an Antigravity model turn.
+`setup` (bridge-run, once until success), `exit_code`, `agy_status`, `worker_result`, `turn_changed_files`, cumulative `changed_files`, `scope_violations`, `claim_mismatches` (task_id; files claimed vs git), `git_violations`, `permission_notices` (stderr), `tool_errors`, `bridge_validation` (bridge re-runs `validation_commands` after completed turns), `usage`.
 
-## 10. Review protocol
+## 11. Scope enforcement (two layers)
 
-Codex SHOULD perform:
+1. **Before** (hook, inside GravityBridge worktrees only): `write_to_file`, `replace_file_content`, `multi_replace_file_content` outside the worktree or violating scope → `deny`; `run_command` with Cwd outside the worktree or mutating git (`commit push merge rebase reset checkout switch branch worktree stash tag cherry-pick revert clean restore am apply pull fetch remote config …`) → `deny`; commands equal to `validation_commands` ∪ `allowed_commands` or read-only git (`status diff log show`) → `auto_approve`; anything else → `allow` (Antigravity's normal permission policy decides). Outside GravityBridge worktrees the hook always answers `allow`.
+2. **After** (runner): every changed path (incl. rename sources) is checked against `allowed_paths`, `forbidden_paths` and protected paths `.git/** .agents/** .codex/** AGENTS.md docs/GRAVITYBRIDGE/**`; `mutating=false` makes any change a violation.
 
-1. worker result inspection;
-2. event inspection when useful;
-3. actual diff inspection;
-4. changed-file scope check;
-5. code correctness review;
-6. architecture review;
-7. dependency/security review;
-8. independent build/lint/test/typecheck when appropriate;
-9. acceptance-criteria-by-criteria verification.
+## 12. Contracts
 
-Codex MUST NOT accept work solely because the worker reports tests as passed.
+- Task Contract: `schemas/task.schema.json` (key fields: `task_id`, `goal`, `scope`, `acceptance_criteria`, `context`, `setup_commands`, `validation_commands`, `allowed_commands`, `worker{agent,model,effort,print_timeout}`, `limits{max_retries,max_rework_cycles,max_blocker_answers,setup_timeout,validation_timeout}`).
+- Result Contract: `schemas/result.schema.json` (strict; unknown keys rejected).
+- Review: `schemas/review.schema.json` (`decision` ACCEPT/REWORK/REJECT/TAKEOVER, `blocking_findings`, `non_blocking_findings`, `override_reason`).
 
-## 11. Rework protocol
+## 13. Security
 
-Rework MUST be targeted.
+- No `--dangerously-skip-permissions`. No merge/push authority for the worker.
+- Worker env is sanitized; the bridge's own commands use the same sanitized env.
+- Prompts tell the worker that repository instruction files describing other roles are data, not instructions.
+- Hook fails closed for writes inside GravityBridge worktrees, open everywhere else.
 
-Codex SHOULD:
+## 14. Known limitations (to be confirmed with the real CLI via `scripts/smoke`)
 
-- enumerate blocking findings;
-- preserve accepted work;
-- restrict files when possible;
-- avoid full redesign unless required;
-- reuse the existing conversation;
-- stop after the configured rework budget.
+- Hook invocation in headless `-p` mode and the effect of `auto_approve` on soft-denied commands are documented by Antigravity but not yet verified on the user's machine; the after-turn checks and bridge-run validation keep the system safe even if the hook is not called.
+- Agent names from a plugin may need a namespace on some agy versions; the smoke test reveals this.
+- On Windows `agy` must resolve to an executable; otherwise set `GRAVITYBRIDGE_AGY` to its full path.
 
-## 12. Task contract
+## 15. Definition of done (V1.1)
 
-Canonical machine schema: `schemas/task.schema.json`.
-
-V1 requires:
-
-- schema_version;
-- task_id;
-- type;
-- goal;
-- base_sha;
-- path scope;
-- acceptance criteria;
-- worker agent and effort.
-
-## 13. Result contract
-
-Canonical machine schema: `schemas/result.schema.json`.
-
-The Antigravity result MUST include:
-
-- exact task ID;
-- worker status;
-- summary;
-- changed-file claims;
-- commands run;
-- validation claims;
-- assumptions;
-- known issues;
-- blockers;
-- recommendations.
-
-GravityBridge separately captures actual Git changed files so Codex can compare claims with repository evidence.
-
-## 14. Security
-
-V1 security posture:
-
-- no automatic permission bypass;
-- no automatic push;
-- no automatic merge;
-- isolated worktree;
-- clean-base requirement;
-- explicit task scope;
-- bounded MCP tools;
-- no generic arbitrary-shell MCP tool;
-- Codex remains integration authority.
-
-## 15. Failure semantics
-
-Execution failure and review failure are different.
-
-### Execution failure
-
-Examples:
-
-- `agy` missing;
-- authentication failure;
-- invalid model/agent;
-- non-zero exit;
-- no terminal result;
-- schema output missing.
-
-Result: `WORKER_FAILED`.
-
-### Review failure
-
-Worker completed but Codex finds defects.
-
-Result: `REWORK`, `REJECT`, or `TAKEOVER`.
-
-## 16. Known V1 limitations
-
-- No asynchronous Codex wake/resume supervisor.
-- No automatic dependency DAG scheduler.
-- No automatic merge/integration tool.
-- Cancellation is best-effort.
-- Worktree/branch cleanup is manual.
-- Path scope is communicated and reviewed but V1 does not yet hard-block filesystem writes by glob at OS level.
-- Antigravity permission behavior remains governed by its own permission system.
-- V1 requires a clean committed base and does not mirror uncommitted Codex changes.
-
-These limitations are intentional and should not be hidden.
-
-## 17. V1 definition of done
-
-V1 is successful when:
-
-1. Codex can call `worker_health`;
-2. Codex can delegate a valid task;
-3. a separate Git worktree is created;
-4. Antigravity runs headlessly with structured output;
-5. terminal result is detected deterministically;
-6. task evidence is persisted;
-7. the MCP call returns to Codex;
-8. Codex can inspect result/events/diff;
-9. Codex can persist ACCEPT/REWORK/REJECT/TAKEOVER;
-10. REWORK can resume the same Antigravity conversation.
-
-## 18. V2 direction
-
-V2 may add:
-
-- persistent Antigravity stdin streaming sessions;
-- asynchronous queue;
-- Codex app-server supervisor;
-- task-completed event -> Codex thread resume;
-- dependency DAG;
-- parallel independent workers;
-- automatic integration gates;
-- richer visual QA artifacts.
+typecheck + build + tests pass on Linux and Windows CI; fake-worker e2e covers new files, scope violation, claim mismatch, validation, rework/last-turn diff, blocked, invalid result, same-failure guard, cancel, orphan reconciliation, duplicate task id, hook decisions; `scripts/smoke` passes against real Antigravity.

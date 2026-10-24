@@ -1,162 +1,93 @@
 ---
 name: antigravity-orchestration
-description: Delegate bounded specialist engineering work from Codex to Antigravity CLI through GravityBridge, then independently review, rework, and integrate the result.
+description: Delegate bounded coding work from Codex to Antigravity CLI through the GravityBridge MCP server (async start/await loop), then independently review, request rework, and integrate. Use when a well-specified implementation task can be handed to a coding worker while Codex keeps every decision.
 ---
 
-# Antigravity Orchestration
+# Antigravity Orchestration (GravityBridge V1.1)
 
-Use this skill when Codex can improve quality or throughput by delegating a bounded specialist task to Antigravity CLI.
+## Roles (fixed)
 
-## Authority
+- **You (Codex) = Lead Engineer.** You decide architecture, scope, UX/product choices, acceptance, integration. You write the Task Contract and review the result.
+- **Antigravity = coding worker only.** It implements exactly the contract, in an isolated worktree, with agent `gb-coder` (or `gb-frontend-coder` for UI work). It never decides, merges or pushes.
+- **GravityBridge = deterministic plumbing.** Worktrees, state machine, scope hook, evidence (real git diff incl. new files), independent validation, budgets.
 
-You are Codex, the Lead Engineer / Orchestrator.
+Worker "completed" is never acceptance. Only your review after inspecting evidence is.
 
-Antigravity is a worker. GravityBridge is the transport/state/evidence layer.
+## When to delegate
 
-Never delegate final engineering judgment.
+Delegate when the task is well specified, bounded to a few paths, and verifiable by commands. Do it yourself when it is tiny, architecture-defining, security-sensitive, or faster to do directly. Decide first, then delegate: the contract must contain the decisions, not ask the worker to make them.
 
-## Session and project lifecycle
+## Before delegating
 
-When using this framework across sessions, follow `protocol/PROMPT_SYSTEM.md` and `prompts/13_PROMPT_USAGE_ORDER.md`.
+1. Inspect the target repo yourself (relevant code, conventions, how to build/test).
+2. Make sure the repo is **clean and committed** (`git status` empty). GravityBridge refuses dirty repos because the worker starts from HEAD.
+3. If environment readiness is unknown, call `worker_health` (with `repo_path`).
+4. Write the Task Contract (schema: `schemas/task.schema.json`):
+   - `task_id`: new and unique (e.g. `GB-UI-007`); never reuse one.
+   - `goal`: precise, including the decisions you already made.
+   - `scope.allowed_paths` (globs) / `forbidden_paths`: as narrow as possible. Protected always: `.git/ .agents/ .codex/ AGENTS.md docs/GRAVITYBRIDGE/`.
+   - `acceptance_criteria`: checkable statements.
+   - `context`: files to read first.
+   - `setup_commands`: e.g. `["npm ci"]` (worktrees have no `node_modules`). Run by the bridge once.
+   - `validation_commands`: e.g. `["npm run lint", "npm run build"]`. Pre-approved for the worker and **re-run by the bridge** after each completed turn.
+   - `worker.agent`: `gb-coder` (default) or `gb-frontend-coder`; `effort`, `print_timeout`.
+   - `limits` if defaults (2 retries, 3 rework cycles, 3 blocker answers) are not right.
 
-For a fresh target-project session, recover durable coordination memory under `docs/GRAVITYBRIDGE/` before material work when those files exist.
+See `examples/task.frontend-ui.json`.
 
-Human-facing lifecycle prompts are routing aids. They do not replace the Task Contract or Codex review protocol.
+## The async loop (tools)
 
-## Before delegation
+```
+start_task(repo_path, task)            -> RUNNING (returns immediately)
+await_task(repo_path, task_id)         -> repeat while RUNNING (each call waits <= 45 s)
+  WORKER_COMPLETED -> review (below) -> record_review(ACCEPT | REWORK | REJECT | TAKEOVER)
+  BLOCKED          -> answer: continue_task(feedback=answer)   or record_review REJECT/TAKEOVER
+  WORKER_FAILED    -> retry_task (transient failures only)    or record_review TAKEOVER
+  CANCELED         -> retry_task or record_review
+REWORK -> state CHANGES_REQUESTED -> continue_task(feedback optional; defaults to blocking_findings) -> await_task ...
+ACCEPTED -> integrate (below) -> cleanup_task
+```
 
-1. Inspect the target repository yourself.
-2. Understand the relevant architecture, constraints, current implementation, and user objective.
-3. Decide whether delegation is useful.
-4. If the task is small, tightly coupled to architecture, security-sensitive, or faster to do directly, do it yourself.
-5. If environment health is unknown, call `worker_health`.
-6. Define a bounded Task Contract.
+Other tools: `get_task` (full status), `list_tasks` (recover after a restart), `get_task_diff` (`range` cumulative|last_turn, `mode` stat|full, `path`), `get_worker_result` (full evidence of a turn), `get_task_events` (raw worker log tail), `cancel_task`.
 
-A strong Task Contract includes:
+While a task runs you may do other read-only work, but **never edit the task's worktree yourself** while it is RUNNING. Up to `GRAVITYBRIDGE_MAX_PARALLEL` (default 2) tasks may run at once if their scopes do not overlap.
 
-- exact goal;
-- base SHA;
-- allowed paths;
-- forbidden paths;
-- acceptance criteria;
-- context files;
-- validation commands;
-- specialist agent;
-- mutation flag;
-- retry/rework limits.
+## Review (mandatory after WORKER_COMPLETED)
 
-## Choosing a worker
+The `await_task` summary already contains the bridge's evidence. Check, in order:
 
-Prefer:
+1. `scope_violations` – must be empty (ACCEPT is refused otherwise).
+2. `latest_turn.bridge_validation` – independent results of `validation_commands`. Failing → REWORK, or ACCEPT with `override_reason` only if the failure pre-exists on base (verify!).
+3. `latest_turn.claim_mismatches`, `git_violations`, `permission_notices`, `tool_errors` – signs of an unreliable turn.
+4. `get_task_diff` (stat, then `mode=full` per file) – read the real code. Check correctness, conventions, unintended logic changes, new dependencies, security.
+5. Compare every acceptance criterion against evidence. Run extra checks yourself in the worktree (read-only) if needed.
 
-- `erp-ux-researcher` for UX audit, information architecture, workflow research, and screen inventory;
-- `ui-designer` for visual hierarchy, layout, interaction design, motion guidance, and UI direction;
-- `frontend-specialist` for frontend implementation;
-- `design-system-specialist` for tokens, components, variants, consistency, and component architecture;
-- `visual-qa` for implementation-vs-reference review and visual regression analysis.
+Decide exactly one:
 
-Do not delegate merely because a worker exists.
+- **ACCEPT** – all criteria met, no blocking findings.
+- **REWORK** – direction right, issues bounded. `blocking_findings` must list each concrete fix (file, problem, expected result). Do not ask for redesign.
+- **REJECT** – wrong direction; discard.
+- **TAKEOVER** – you finish it yourself (same failure twice, budget exhausted, or faster).
 
-## Delegation flow
+## Integration (after ACCEPT)
 
-For V1, prefer `delegate_and_wait`.
+In the main checkout (clean):
 
-The tool returns only after Antigravity has reached a terminal process result or an execution failure.
+```
+git merge --squash gb/<task_id>
+# run the project's validation yourself
+git commit -m "<task_id>: <summary>"
+```
 
-Interpret outcomes:
+Then `cleanup_task(repo_path, task_id, delete_branch=true)`. Never let the worker push or merge.
 
-- `WORKER_COMPLETED`: execution completed; begin Codex review.
-- `BLOCKED`: inspect blocker evidence and resolve if the decision can be made from project context.
-- `WORKER_FAILED`: determine whether retry is appropriate; call `retry_task` only for execution failure and only within the configured retry budget, otherwise take over.
-- `CANCELED`: do not assume any partial work is valid.
+## Failure handling
 
-## Mandatory post-worker review
+- `retry_task` is for execution failures (crash, timeout, invalid result), not for quality issues (use REWORK).
+- The bridge refuses a retry after the **same failure twice**: fix the cause (missing setup command, denied command, wrong contract) or TAKEOVER.
+- `setup failed` → fix `setup_commands` in a new task, or TAKEOVER.
+- Permission notices on commands → the command is not in `validation_commands`/`allowed_commands`; add it in a new task if it is truly needed.
 
-After `WORKER_COMPLETED`:
+## Session handoff
 
-1. Call/read `get_worker_result`.
-2. Call/read `get_task_events` when execution behavior matters.
-3. Call/read `get_task_diff`.
-4. Inspect the actual changed files in the assigned worktree or repository evidence.
-5. Check allowed/forbidden path compliance.
-6. Review correctness and architecture.
-7. Check for unintended business-logic changes.
-8. Check dependencies and security implications.
-9. Independently run relevant validation where possible.
-10. Compare every acceptance criterion against evidence.
-
-Worker self-reported validation is evidence, not proof.
-
-## Decision
-
-Choose exactly one:
-
-### ACCEPT
-
-Use only when acceptance criteria pass and there are no blocking findings.
-
-Codex retains responsibility for integration/merge.
-
-### REWORK
-
-Use when the direction is fundamentally correct and issues are bounded.
-
-Call `continue_task` with targeted feedback.
-
-The feedback must:
-
-- list blocking findings precisely;
-- preserve accepted work;
-- restrict paths if possible;
-- prohibit unnecessary redesign;
-- state validation expectations.
-
-Prefer continuing the same Antigravity conversation rather than starting over.
-
-### REJECT / TAKE OVER
-
-Use when:
-
-- architecture direction is wrong;
-- scope was repeatedly violated;
-- the same failure repeats;
-- rework budget is exhausted;
-- task is safer/faster for Codex to finish directly.
-
-## Retry semantics
-
-Distinguish:
-
-- **retry**: worker process/execution failed;
-- **rework**: worker completed, but Codex found quality/correctness issues.
-
-Do not create infinite loops.
-
-Recommended defaults:
-
-- max worker retries: 2
-- max rework cycles: 3
-- same failure threshold: 2
-
-## Concurrency
-
-Never allow Codex and Antigravity to modify the same working tree at the same time.
-
-Parallel delegated tasks are allowed only when their worktrees and integration boundaries are independent.
-
-## Completion rule
-
-A task is not complete because Antigravity says “done”.
-
-A task becomes acceptable only after Codex verifies the resulting repository state.
-
-## Durable session handoff
-
-For material multi-session work, Codex should keep the target project's `docs/GRAVITYBRIDGE/` memory factual:
-
-- `CURRENT_STATE.md`
-- `SESSION_HANDOFF.md`
-- `TASK_LEDGER.md`
-- `DECISION_LOG.md` for material decisions
-
-Do not persist hidden chain-of-thought. Persist only recovery-relevant facts, decisions, evidence references, blockers, and next safe actions.
+For multi-session work keep the target project's `docs/GRAVITYBRIDGE/` (CURRENT_STATE, TASK_LEDGER, SESSION_HANDOFF, DECISION_LOG) factual. At session start call `list_tasks(repo_path)` to find unfinished tasks. Persist facts, decisions and next safe actions only.

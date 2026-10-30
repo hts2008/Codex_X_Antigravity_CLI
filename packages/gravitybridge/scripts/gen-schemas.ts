@@ -44,7 +44,7 @@ if (isMain) {
   let stale = 0;
   for (const [name, content] of Object.entries(renderSchemas())) {
     const file = path.join(root, "schemas", name);
-    const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+    const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n") : "";
     if (current === content) continue;
     if (check) { console.error(`out of date: schemas/${name}`); stale++; }
     else { fs.writeFileSync(file, content); console.log(`wrote schemas/${name}`); }

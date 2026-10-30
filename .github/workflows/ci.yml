@@ -7,7 +7,11 @@ on:
 
 jobs:
   gravitybridge:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: packages/gravitybridge
@@ -15,7 +19,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
-      - run: npm install
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/gravitybridge/package-lock.json
+      - run: git config --global user.name ci && git config --global user.email ci@localhost
+      - run: npm ci
       - run: npm run typecheck
+      - run: npm run check:schemas
       - run: npm run build
+      - run: npm test

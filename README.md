@@ -1,334 +1,129 @@
 # Codex × Antigravity CLI — GravityBridge
 
-Repo này là **control plane** để Codex điều phối Antigravity CLI trong các dự án phần mềm.
+Repo này giúp **Codex** điều phối **Antigravity CLI** khi làm phần mềm:
 
-Mục tiêu chính:
+- **Codex = trưởng nhóm kỹ thuật.** Hiểu codebase, ra mọi quyết định, chia việc, viết "hợp đồng công việc" (Task Contract), review và quyết định chấp nhận / yêu cầu sửa / tự làm lại.
+- **Antigravity CLI = thợ code.** Chỉ viết code đúng theo chỉ thị của Codex, trong một bản sao cô lập (worktree). Không tự quyết thiết kế, không merge, không push.
+- **GravityBridge = cầu nối (MCP server).** Tạo bản sao cô lập, chạy Antigravity ở chế độ nền, chặn ghi file ngoài phạm vi, tự chụp lại toàn bộ thay đổi, tự chạy lại lệnh kiểm tra, và báo kết quả có bằng chứng cho Codex.
 
-- **Codex** giữ vai trò Lead Engineer / Orchestrator: hiểu toàn bộ codebase, chia task, quyết định phần nào tự làm và phần nào giao Antigravity, review diff, chạy kiểm thử và quyết định cuối cùng.
-- **Antigravity CLI** là specialist worker: UX/UI, frontend, visual QA, design system, codebase research hoặc các task chuyên biệt khác.
-- **GravityBridge** là lớp MCP trung gian: tạo worktree cô lập, chạy `agy` ở headless mode, theo dõi `stream-json`, nhận terminal result, lưu logs/result/diff và trả quyền điều khiển cho Codex.
-- **Worker SUCCESS không đồng nghĩa task được chấp nhận.** Codex luôn review độc lập trước khi merge.
+> "Antigravity báo xong" **không** có nghĩa là xong. Chỉ khi Codex review bằng chứng và chấp nhận thì mới tính.
 
-## Trạng thái
+Trạng thái: **V1.1** — vòng lặp bất đồng bộ, có kiểm thử tự động trên Linux + Windows. Xem kế hoạch và lý do thay đổi ở [docs/IMPROVEMENT_PLAN.md](./docs/IMPROVEMENT_PLAN.md).
 
-**GravityBridge V1 — implementation scaffold / early usable build**
+---
 
-V1 tập trung vào vòng lặp đồng bộ đáng tin cậy:
+## 1. Cài đặt (làm 1 lần trên mỗi máy)
 
-```text
-User objective
-  -> Codex phân tích repo
-  -> Codex tạo Task Contract
-  -> GravityBridge delegate_and_wait
-  -> worktree riêng
-  -> Antigravity CLI thực thi
-  -> stream-json terminal result
-  -> GravityBridge lưu evidence
-  -> Codex tiếp tục ngay
-  -> Codex review code + diff + tests
-  -> ACCEPT hoặc targeted REWORK
-```
+Cần có sẵn: **Git**, **Node.js 22+**, **Antigravity CLI (`agy`)** đã đăng nhập (mở terminal gõ `agy` một lần), và **Codex** (CLI hoặc app).
 
-## Cấu trúc repo
-
-```text
-.
-├── AGENTS.md
-├── FRAMEWORK.md
-├── README.md
-├── .codex-plugin/
-│   └── plugin.json
-├── .mcp.json
-├── skills/
-│   └── antigravity-orchestration/
-│       └── SKILL.md
-├── protocol/
-│   └── SPECIFICATION_V1.md
-├── schemas/
-│   ├── task.schema.json
-│   ├── result.schema.json
-│   └── review.schema.json
-├── packages/
-│   └── gravitybridge/
-│       ├── package.json
-│       ├── tsconfig.json
-│       └── src/
-├── antigravity-plugin/
-│   └── codex-worker/
-│       ├── plugin.json
-│       ├── rules/
-│       ├── skills/
-│       └── agents/
-├── scripts/
-│   ├── setup.ps1
-│   ├── setup.sh
-│   ├── doctor.ps1
-│   └── doctor.sh
-└── examples/
-    └── task.frontend-ui.json
-```
-
-## Yêu cầu
-
-Máy local cần:
-
-- Git
-- Node.js 20+ (khuyến nghị Node.js LTS mới)
-- npm
-- Codex CLI / Codex desktop environment có hỗ trợ MCP/plugin
-- Antigravity CLI (`agy`)
-- Antigravity đã login ít nhất một lần bằng interactive session
-
-Antigravity headless sử dụng cached credentials. Nếu chưa login, chạy:
+Mở PowerShell tại thư mục repo này và chạy:
 
 ```powershell
-agy
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+powershell -ExecutionPolicy Bypass -File scripts\doctor.ps1
+powershell -ExecutionPolicy Bypass -File scripts\smoke.ps1
 ```
 
-rồi hoàn tất đăng nhập.
-
-## Cài đặt nhanh trên Windows
-
-Clone repo:
-
-```powershell
-git clone https://github.com/hts2008/Codex_X_Antigravity_CLI.git
-cd Codex_X_Antigravity_CLI
-```
-
-Setup:
-
-```powershell
-./scripts/setup.ps1
-```
-
-Kiểm tra:
-
-```powershell
-./scripts/doctor.ps1
-```
-
-Setup script sẽ:
-
-1. cài dependencies của GravityBridge;
-2. build TypeScript;
-3. kiểm tra Git / Node / npm / `agy`;
-4. cài/sync Antigravity plugin `codex-worker` bằng `agy plugin install` khi có thể;
-5. để repo sẵn sàng cho Codex nạp như orchestration repo.
-
-## Linux / macOS
+macOS / Linux:
 
 ```bash
-./scripts/setup.sh
-./scripts/doctor.sh
+./scripts/setup.sh && ./scripts/doctor.sh && ./scripts/smoke.sh
 ```
 
-## Cho Codex sử dụng repo này
+Ý nghĩa:
 
-Khi mở repo này bằng Codex, `AGENTS.md` yêu cầu Codex đọc:
+| Lệnh | Làm gì |
+|---|---|
+| `setup` | Cài thư viện, build, đăng ký **hook chặn phạm vi** vào Antigravity, cài plugin worker `codex-worker`, chép skill cho Codex, đăng ký MCP server `gravitybridge` với Codex. Chạy lại sau mỗi lần cập nhật repo (`git pull`). |
+| `doctor` | Kiểm tra mọi thứ. Dòng `[FAIL]` kèm gợi ý cách sửa ngay bên dưới. |
+| `smoke` | Giao cho Antigravity **một việc nhỏ thật** trong repo tạm, kiểm tra toàn bộ cơ chế an toàn. Cuối cùng phải thấy 5 dòng `[OK]`. Nếu có `[FAIL]`, copy toàn bộ kết quả gửi cho trợ lý kỹ thuật của bạn. |
 
-1. `FRAMEWORK.md`
-2. `protocol/SPECIFICATION_V1.md`
-3. `protocol/PROMPT_SYSTEM.md`
-4. `prompts/13_PROMPT_USAGE_ORDER.md`
-5. `skills/antigravity-orchestration/SKILL.md`
+Sau khi setup xong, **khởi động lại Codex**.
 
-Repo có Codex compatibility plugin tại `.codex-plugin/plugin.json` và MCP config tại `.mcp.json`.
+## 2. Dùng hằng ngày
 
-Nếu runtime không tự nạp local MCP server từ plugin, GravityBridge có thể chạy trực tiếp:
+Bạn chỉ cần nói chuyện với Codex. Ví dụ:
 
-```powershell
-node ./packages/gravitybridge/dist/index.js
-```
+> "Dùng skill antigravity-orchestration. Trong repo `D:\du-an\shop`, thêm trang Liên hệ có form gửi email. Bạn tự quyết thiết kế, giao Antigravity code, review kỹ rồi tích hợp."
 
-Hoặc đăng ký GravityBridge vào Codex MCP configuration theo đường dẫn local tuyệt đối của file trên.
-
-## Cho Antigravity đồng bộ cách làm việc
-
-Plugin dành cho Antigravity nằm ở:
+Codex sẽ tự làm vòng lặp:
 
 ```text
-antigravity-plugin/codex-worker
+Codex xem code, ra quyết định, viết Task Contract
+  -> start_task        (GravityBridge tạo worktree riêng, Antigravity bắt đầu code ở nền)
+  -> await_task ...    (Codex chờ từng đợt ≤ 45 giây, xem tiến độ)
+  -> WORKER_COMPLETED  (có bằng chứng: file thay đổi, vi phạm phạm vi, kết quả lint/build do bridge tự chạy)
+  -> Codex review diff thật
+       ├─ ACCEPT   -> Codex merge vào nhánh chính, kiểm tra lại, commit, dọn worktree
+       ├─ REWORK   -> Codex ghi rõ lỗi cần sửa -> continue_task -> Antigravity sửa tiếp
+       ├─ REJECT   -> bỏ
+       └─ TAKEOVER -> Codex tự làm
 ```
 
-Cài trực tiếp:
+Lưu ý cho bạn:
 
-```powershell
-agy plugin install ./antigravity-plugin/codex-worker
-```
+1. **Commit trước khi giao việc.** GravityBridge từ chối nếu repo còn thay đổi chưa commit (để Antigravity bắt đầu từ đúng code Codex đã xem).
+2. Không tự sửa code trong thư mục worktree (`~/.gravitybridge/worktrees/...`) khi task đang chạy.
+3. Nếu Codex hoặc máy bị khởi động lại giữa chừng: chỉ cần bảo Codex *"gọi list_tasks để xem việc dang dở"*. Task đang chạy vẫn tiếp tục ở nền; task bị chết giữa chừng sẽ được đánh dấu `WORKER_FAILED` để Codex quyết định chạy lại hay tự làm.
 
-Plugin cung cấp:
+Gợi ý câu lệnh theo vòng đời dự án: [prompts/12_HUMAN_RUNBOOK.md](./prompts/12_HUMAN_RUNBOOK.md) và [prompts/13_PROMPT_USAGE_ORDER.md](./prompts/13_PROMPT_USAGE_ORDER.md).
 
-- worker execution rule;
-- orchestrated-task skill;
-- UX researcher;
-- UI designer;
-- frontend specialist;
-- design-system specialist;
-- visual-QA specialist.
+## 3. Cơ chế an toàn (vì sao tin được kết quả)
 
-Codex có thể yêu cầu setup/doctor chạy trước khi bắt đầu một project mới.
+| Rủi ro | Cách GravityBridge xử lý |
+|---|---|
+| Antigravity sửa file ngoài phạm vi | Hook chặn **trước khi ghi**; sau mỗi lượt còn kiểm tra lại toàn bộ thay đổi. Có vi phạm thì Codex không thể ACCEPT. |
+| Antigravity "báo cáo đẹp" nhưng sai | Bridge so sánh danh sách file Antigravity khai với git thật, và **tự chạy lại** lệnh kiểm tra (lint/build/test). |
+| File mới bị bỏ sót khi review | Mỗi lượt được chụp thành một commit nên diff luôn có cả file mới/xoá. |
+| Antigravity tự commit, đổi nhánh, push | Lệnh git thay đổi lịch sử bị hook chặn; nếu vẫn xảy ra thì bị ghi nhận là vi phạm. |
+| Việc dài làm Codex bị timeout | Mọi lệnh trả về trong < 1 phút; Antigravity chạy ở tiến trình nền riêng. |
+| Treo mãi ở trạng thái "đang chạy" | Có watchdog + hạn chót; tiến trình chết được phát hiện và đánh dấu. |
+| Lặp vô hạn | Giới hạn số lần chạy lại / sửa / hỏi đáp; cùng một lỗi 2 lần liên tiếp thì bắt buộc Codex tự xử lý. |
+| Lộ khoá bí mật | Biến môi trường chứa token/khoá (OpenAI, GitHub, cloud…) bị loại bỏ trước khi chạy Antigravity. |
+| Mất việc do gọi trùng | Không bao giờ tự xoá worktree/nhánh cũ; trùng `task_id` thì báo lỗi. |
 
+## 4. Gắn repo này vào một dự án (tuỳ chọn)
 
-## Bộ prompt theo vòng đời dự án
-
-Repo hiện có prompt library tại [prompts/](./prompts/).
-
-Thay vì phải copy prompt qua lại giữa Codex và Antigravity, Human chủ yếu nói chuyện với **Codex**; Codex tự gọi Antigravity qua GravityBridge.
-
-Thứ tự khuyến nghị:
-
-```text
-Máy mới
-  -> GB-H01 Machine Bootstrap
-
-Project mới
-  -> GB-H02 New Project Bootstrap
-  -> GB-H03 Session Start
-
-Làm việc hằng ngày
-  -> GB-H03 Session Start
-  -> GB-H04 Daily Work
-       -> Codex tự làm hoặc delegate Antigravity
-       -> Codex tự review/rework/retry/takeover
-  -> GB-H08 Session Close
-
-Quay lại sau gián đoạn
-  -> GB-H06 Resume / Recovery
-
-State lệch
-  -> GB-H07 Sync / Reconcile
-
-Requirement đổi
-  -> GB-H09 Requirement Change
-
-Bug
-  -> GB-H10 Debug / Fix
-
-Merge/release
-  -> GB-H11 Release Gate
-```
-
-Nếu chỉ muốn biết **prompt nào dùng lúc nào**, đọc:
-
-- [prompts/README.md](./prompts/README.md)
-- [prompts/12_HUMAN_RUNBOOK.md](./prompts/12_HUMAN_RUNBOOK.md)
-- [prompts/13_PROMPT_USAGE_ORDER.md](./prompts/13_PROMPT_USAGE_ORDER.md)
-
-Target project được bootstrap nên có Project Coordination Memory tối giản:
-
-```text
-docs/GRAVITYBRIDGE/
-  PROJECT_PROFILE.md
-  CURRENT_STATE.md
-  SESSION_HANDOFF.md
-  DECISION_LOG.md
-  TASK_LEDGER.md
-```
-
-Có thể tạo bộ khung an toàn bằng:
+Tạo bộ "trí nhớ dự án" cho Codex (không ghi đè file đã có):
 
 ```powershell
 ./scripts/bootstrap-target.ps1 -TargetRoot "D:\path\to\project"
 ```
 
-Script chỉ tạo file còn thiếu, không ghi đè memory hiện hữu.
+Tạo `docs/GRAVITYBRIDGE/` gồm PROJECT_PROFILE, CURRENT_STATE, SESSION_HANDOFF, DECISION_LOG, TASK_LEDGER.
 
-## MCP tools V1
+## 5. MCP tools (cho Codex)
 
-GravityBridge expose:
+`start_task`, `await_task`, `continue_task`, `retry_task`, `cancel_task`, `record_review`, `cleanup_task`, `get_task`, `list_tasks`, `get_task_diff`, `get_worker_result`, `get_task_events`, `worker_health`. Chi tiết: [protocol/SPECIFICATION_V1.md](./protocol/SPECIFICATION_V1.md) và [skills/antigravity-orchestration/SKILL.md](./skills/antigravity-orchestration/SKILL.md).
 
-- `delegate_and_wait`
-- `retry_task`
-- `continue_task`
-- `get_task`
-- `get_task_events`
-- `get_worker_result`
-- `get_task_diff`
-- `cancel_task`
-- `worker_health`
+Ví dụ Task Contract: [examples/task.frontend-ui.json](./examples/task.frontend-ui.json).
 
-### Luồng chuẩn
+## 6. Cấu trúc repo
 
 ```text
-Codex
-  |
-  +--> worker_health
-  |
-  +--> delegate_and_wait
-  |      |
-  |      +--> create isolated git worktree
-  |      +--> run agy --output-format stream-json
-  |      +--> enforce result.schema.json
-  |      +--> capture terminal result
-  |      +--> capture diff/events/logs
-  |
-  +<-- WORKER_COMPLETED / BLOCKED / WORKER_FAILED
-  |
-  +--> independent review
-         |
-         +--> ACCEPT
-         |
-         +--> continue_task(feedback)
-         |
-         +--> REJECT / Codex takeover
+packages/gravitybridge/      MCP server (TypeScript)
+  src/index.ts               các MCP tool
+  src/jobs.ts                vòng đời task (bất đồng bộ)
+  src/runner.ts              tiến trình nền chạy 1 lượt Antigravity + thu bằng chứng
+  src/hook.ts                hook PreToolUse chặn phạm vi
+  src/install.ts             setup / doctor / smoke
+  test/                      kiểm thử tự động với Antigravity giả
+antigravity-plugin/codex-worker/agents/   gb-coder, gb-frontend-coder (chỉ code)
+skills/antigravity-orchestration/         skill cho Codex
+schemas/                     JSON Schema (sinh tự động từ src/types.ts)
+protocol/  prompts/  FRAMEWORK.md         quy trình và tài liệu
+scripts/                     setup / doctor / smoke / bootstrap-target
+docs/IMPROVEMENT_PLAN.md     phương án cải tiến V1.1
 ```
 
-## Nguyên tắc quan trọng
+## 7. Cho người phát triển repo
 
-### 1. Antigravity không có quyền tự accept
+```bash
+cd packages/gravitybridge
+npm ci && npm run typecheck && npm run build && npm test
+npm run gen:schemas   # sau khi sửa src/types.ts
+```
 
-`SUCCESS` của `agy` chỉ là **process-level success**.
+Biến môi trường: `GRAVITYBRIDGE_HOME` (thư mục trạng thái, mặc định `~/.gravitybridge`), `GRAVITYBRIDGE_AGY` (đường dẫn đầy đủ tới `agy` nếu không có trong PATH), `GRAVITYBRIDGE_MAX_PARALLEL` (mặc định 2), `GRAVITYBRIDGE_ENV_KEEP` (danh sách biến môi trường cần giữ lại cho worker).
 
-### 2. Không cùng sửa một working tree
-
-Mutating task luôn ưu tiên Git worktree riêng.
-
-### 3. Codex kiểm chứng thực tế
-
-Codex phải đọc diff, code thật và chạy validation cần thiết.
-
-### 4. Rework tiếp tục conversation cũ
-
-GravityBridge lưu `conversation_id` và `continue_task` sử dụng lại context của Antigravity.
-
-### 5. Không dùng quyền nguy hiểm mặc định
-
-V1 không tự thêm `--dangerously-skip-permissions`.
-
-## Tài liệu
-
-- Kiến trúc tổng thể: [FRAMEWORK.md](./FRAMEWORK.md)
-- Đặc tả kỹ thuật V1: [protocol/SPECIFICATION_V1.md](./protocol/SPECIFICATION_V1.md)
-- Codex workflow skill: [skills/antigravity-orchestration/SKILL.md](./skills/antigravity-orchestration/SKILL.md)
-- Project bootstrap protocol: [protocol/PROJECT_BOOTSTRAP.md](./protocol/PROJECT_BOOTSTRAP.md)
-- Prompt lifecycle system: [protocol/PROMPT_SYSTEM.md](./protocol/PROMPT_SYSTEM.md)
-- Human prompt runbook: [prompts/12_HUMAN_RUNBOOK.md](./prompts/12_HUMAN_RUNBOOK.md)
-- Task schema: [schemas/task.schema.json](./schemas/task.schema.json)
-- Result schema: [schemas/result.schema.json](./schemas/result.schema.json)
-
-## Roadmap
-
-**V1**
-- synchronous delegation;
-- deterministic completion;
-- worktree isolation;
-- result schema;
-- event log;
-- review/rework loop.
-
-**V1.1**
-- richer blocker handling;
-- cleanup/integration helpers;
-- live progress resources;
-- stronger path-policy enforcement.
-
-**V2**
-- persistent Antigravity sessions;
-- asynchronous scheduler;
-- Codex app-server supervisor;
-- automatic Codex wake/resume;
-- dependency DAG;
-- parallel independent workers.
-
-> Repo này chủ động giữ **README bằng tiếng Việt**; protocol, schemas, skills, rules, agents và source code dùng **tiếng Anh** để nhất quán với hệ sinh thái kỹ thuật.
+Không bật `--dangerously-skip-permissions`. Không cấp quyền merge/push cho Antigravity.

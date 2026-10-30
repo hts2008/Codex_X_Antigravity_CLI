@@ -1,26 +1,18 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gravitybridge.local/schemas/task.schema.json",
   "title": "GravityBridge Task Contract",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "task_id",
-    "type",
-    "goal",
-    "base_sha",
-    "scope",
-    "acceptance_criteria",
-    "worker"
-  ],
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
     "task_id": {
       "type": "string",
       "minLength": 3,
       "maxLength": 96,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9_-]+)*$"
     },
     "type": {
       "type": "string",
@@ -30,59 +22,103 @@
     "goal": {
       "type": "string",
       "minLength": 10,
-      "maxLength": 20000
+      "maxLength": 8000
     },
     "base_sha": {
+      "description": "Commit the worker starts from. Must equal the target repo HEAD. Omit to use the current HEAD.",
       "type": "string",
       "pattern": "^[0-9a-fA-F]{7,64}$"
     },
     "mutating": {
-      "type": "boolean",
-      "default": true
+      "default": true,
+      "description": "false = read-only task: every file write is blocked and any change is a scope violation.",
+      "type": "boolean"
     },
     "scope": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["allowed_paths", "forbidden_paths"],
       "properties": {
         "allowed_paths": {
+          "minItems": 1,
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "minItems": 1
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Glob patterns relative to repo root, e.g. src/app/dashboard/**"
         },
         "forbidden_paths": {
+          "default": [],
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "default": []
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
-      }
+      },
+      "required": [
+        "allowed_paths"
+      ]
     },
     "acceptance_criteria": {
+      "minItems": 1,
+      "maxItems": 30,
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
-      "minItems": 1
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      }
     },
     "context": {
+      "default": [],
+      "description": "Files the worker should read first.",
+      "maxItems": 50,
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
-      "default": []
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "setup_commands": {
+      "default": [],
+      "description": "Run by GravityBridge (not the worker) once in the fresh worktree before the first turn, e.g. 'npm ci'.",
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "validation_commands": {
+      "default": [],
+      "description": "Pre-approved for the worker AND re-run independently by GravityBridge after every completed turn.",
+      "maxItems": 10,
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
-      "default": []
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
-    "dependencies": {
+    "allowed_commands": {
+      "default": [],
+      "description": "Extra exact command lines the worker may run without approval.",
+      "maxItems": 20,
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
-      "default": []
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "worker": {
+      "default": {
+        "agent": "gb-coder",
+        "effort": "high",
+        "print_timeout": "30m"
+      },
       "type": "object",
-      "additionalProperties": false,
-      "required": ["agent", "effort"],
       "properties": {
         "agent": {
+          "default": "gb-coder",
           "type": "string",
           "minLength": 1,
           "maxLength": 96
@@ -93,36 +129,72 @@
           "maxLength": 160
         },
         "effort": {
-          "enum": ["low", "medium", "high"]
+          "default": "high",
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
         },
         "print_timeout": {
+          "default": "30m",
           "type": "string",
-          "pattern": "^[0-9]+[smh]$",
-          "default": "30m"
+          "pattern": "^[0-9]+[smh]$"
         }
       }
     },
     "limits": {
+      "default": {
+        "max_retries": 2,
+        "max_rework_cycles": 3,
+        "max_blocker_answers": 3,
+        "setup_timeout": "20m",
+        "validation_timeout": "15m"
+      },
       "type": "object",
-      "additionalProperties": false,
       "properties": {
         "max_retries": {
+          "default": 2,
           "type": "integer",
           "minimum": 0,
-          "maximum": 10,
-          "default": 2
+          "maximum": 10
         },
         "max_rework_cycles": {
+          "default": 3,
           "type": "integer",
           "minimum": 0,
-          "maximum": 10,
-          "default": 3
+          "maximum": 10
+        },
+        "max_blocker_answers": {
+          "default": 3,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "setup_timeout": {
+          "default": "20m",
+          "type": "string",
+          "pattern": "^[0-9]+[smh]$"
+        },
+        "validation_timeout": {
+          "default": "15m",
+          "type": "string",
+          "pattern": "^[0-9]+[smh]$"
         }
       }
     },
     "notes": {
       "type": "string",
-      "maxLength": 20000
+      "maxLength": 4000
     }
-  }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "type",
+    "goal",
+    "scope",
+    "acceptance_criteria"
+  ]
 }

@@ -1,9 +1,105 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gravitybridge.local/schemas/result.schema.json",
   "title": "GravityBridge Antigravity Worker Result",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 96
+    },
+    "worker_status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "blocked"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    },
+    "files_changed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "commands_run": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "passed",
+          "failed",
+          "not_run",
+          "not_applicable"
+        ]
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "known_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "type",
+          "question",
+          "evidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
   "required": [
     "schema_version",
     "task_id",
@@ -17,66 +113,5 @@
     "blockers",
     "recommendations"
   ],
-  "properties": {
-    "schema_version": { "const": "1.0" },
-    "task_id": {
-      "type": "string",
-      "minLength": 3,
-      "maxLength": 96
-    },
-    "worker_status": {
-      "enum": ["completed", "blocked"]
-    },
-    "summary": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 20000
-    },
-    "files_changed": {
-      "type": "array",
-      "items": { "type": "string" }
-    },
-    "commands_run": {
-      "type": "array",
-      "items": { "type": "string" }
-    },
-    "validation": {
-      "type": "object",
-      "additionalProperties": {
-        "enum": ["passed", "failed", "not_run", "not_applicable"]
-      }
-    },
-    "assumptions": {
-      "type": "array",
-      "items": { "type": "string" }
-    },
-    "known_issues": {
-      "type": "array",
-      "items": { "type": "string" }
-    },
-    "blockers": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["type", "question", "evidence"],
-        "properties": {
-          "type": { "type": "string" },
-          "question": { "type": "string" },
-          "options": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "evidence": {
-            "type": "array",
-            "items": { "type": "string" }
-          }
-        }
-      }
-    },
-    "recommendations": {
-      "type": "array",
-      "items": { "type": "string" }
-    }
-  }
+  "additionalProperties": false
 }

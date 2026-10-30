@@ -1,49 +1,24 @@
-param(
-  [switch]$SkipAntigravityPlugin
-)
-
+# One-time (and after every git pull) setup: build GravityBridge and register it with Antigravity + Codex.
+# Usage:  powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 [--skip-agy] [--skip-codex] [--dry-run]
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Bridge = Join-Path $RepoRoot "packages\gravitybridge"
-$Plugin = Join-Path $RepoRoot "antigravity-plugin\codex-worker"
 
-function Require-Command([string]$Name) {
-  $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-  if (-not $cmd) {
-    throw "Required command not found: $Name"
-  }
-  Write-Host "[ok] $Name -> $($cmd.Source)"
+foreach ($c in @("git", "node", "npm")) {
+  if (-not (Get-Command $c -ErrorAction SilentlyContinue)) { throw "Required command not found: $c. Install it, open a NEW terminal, and run this script again." }
 }
 
-Write-Host "== GravityBridge setup =="
-Require-Command git
-Require-Command node
-Require-Command npm
-Require-Command agy
-
-Write-Host "[info] Installing GravityBridge dependencies..."
+Write-Host "== Building GravityBridge =="
 Push-Location $Bridge
 try {
-  if (Test-Path "package-lock.json") {
-    npm ci
-  } else {
-    npm install
-  }
+  npm ci --no-audit --no-fund
+  if ($LASTEXITCODE -ne 0) { throw "npm ci failed ($LASTEXITCODE)" }
   npm run build
-  npm run typecheck
+  if ($LASTEXITCODE -ne 0) { throw "npm run build failed ($LASTEXITCODE)" }
 }
 finally {
   Pop-Location
 }
 
-if (-not $SkipAntigravityPlugin) {
-  Write-Host "[info] Installing Antigravity plugin: codex-worker"
-  & agy plugin install $Plugin
-  if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Antigravity plugin install returned exit code $LASTEXITCODE. If the plugin already exists, update/reinstall it manually."
-  }
-}
-
-Write-Host ""
-Write-Host "Setup completed."
-Write-Host "Next: $RepoRoot\scripts\doctor.ps1"
+& node (Join-Path $Bridge "dist\install.js") @args
+exit $LASTEXITCODE

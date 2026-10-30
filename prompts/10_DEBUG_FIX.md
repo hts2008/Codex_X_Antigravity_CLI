@@ -26,7 +26,7 @@ DEBUG PROTOCOL
 2. Read relevant contracts/tests/code/history.
 3. Distinguish symptom from root cause.
 4. Build a short hypothesis set and falsify it with evidence.
-5. Decide whether a specialist Antigravity task is useful.
+5. Decide whether a bounded Antigravity coding task is useful.
 6. For delegated debugging, scope the task tightly and require evidence.
 7. Do not accept worker claims without reproducing/validating the fix.
 8. Add/update regression tests when appropriate.

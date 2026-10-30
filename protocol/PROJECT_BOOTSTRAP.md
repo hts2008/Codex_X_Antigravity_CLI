@@ -29,6 +29,7 @@ Windows:
 ```powershell
 ./scripts/setup.ps1
 ./scripts/doctor.ps1
+./scripts/smoke.ps1
 ```
 
 macOS/Linux:
@@ -36,6 +37,7 @@ macOS/Linux:
 ```bash
 ./scripts/setup.sh
 ./scripts/doctor.sh
+./scripts/smoke.sh
 ```
 
 Setup MUST build the GravityBridge MCP server and install/synchronize the Antigravity `codex-worker` plugin unless explicitly skipped.
@@ -88,13 +90,10 @@ The expected plugin is:
 codex-worker
 ```
 
-The expected specialist agent set includes:
+The expected worker agents (coding only) are:
 
-- `erp-ux-researcher`
-- `ui-designer`
-- `frontend-specialist`
-- `design-system-specialist`
-- `visual-qa`
+- `gb-coder`
+- `gb-frontend-coder`
 
 If the plugin is missing or stale, rerun the setup script or:
 
@@ -118,20 +117,14 @@ and launches:
 node ./packages/gravitybridge/dist/index.js
 ```
 
-If Codex does not automatically load the bundled MCP configuration, register the same stdio server explicitly using an absolute local path.
+The setup script registers the server with `codex mcp add gravitybridge -- node <abs>/packages/gravitybridge/dist/index.js` (absolute path). If the codex CLI is not available, it prints the `~/.codex/config.toml` block to add manually.
 
-A healthy MCP tool surface for V1 includes:
+A healthy MCP tool surface for V1.1 includes:
 
-- `worker_health`
-- `delegate_and_wait`
-- `retry_task`
-- `continue_task`
-- `get_task`
-- `get_task_events`
-- `get_worker_result`
-- `get_task_diff`
-- `record_review`
-- `cancel_task`
+- `worker_health`, `list_tasks`, `get_task`
+- `start_task`, `await_task`, `continue_task`, `retry_task`, `cancel_task`
+- `get_task_diff`, `get_worker_result`, `get_task_events`
+- `record_review`, `cleanup_task`
 
 ## 7. Project Coordination Memory
 
@@ -187,7 +180,7 @@ Recommended first sequence:
 ```text
 Codex -> worker_health
 GravityBridge -> environment evidence
-Codex -> delegate_and_wait(Task Contract)
+Codex -> start_task(Task Contract), then await_task until not RUNNING
 GravityBridge -> isolated worktree
 GravityBridge -> Antigravity headless worker
 Antigravity -> init / step_update* / result
@@ -230,7 +223,7 @@ Those project-local instructions supplement the GravityBridge protocol. They MUS
 
 ```text
 Codex = orchestration + review + integration authority
-Antigravity = bounded specialist execution
+Antigravity = bounded code implementation (no decisions)
 GravityBridge = deterministic coordination/evidence
 ```
 

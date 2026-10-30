@@ -29,7 +29,7 @@ MANDATORY START
 4. Inspect project architecture, package/tooling layout, build/test/lint/typecheck commands, major contracts and documentation.
 5. Inspect Git branch, HEAD, recent log and dirty state.
 6. Run GravityBridge worker_health against this target repo.
-7. Verify codex-worker Antigravity plugin and specialist agents.
+7. Verify the codex-worker Antigravity plugin and the gb-coder / gb-frontend-coder agents.
 8. Do not overwrite project-owned AI instructions.
 
 CREATE OR UPDATE DURABLE PROJECT COORDINATION MEMORY

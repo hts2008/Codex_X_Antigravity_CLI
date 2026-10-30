@@ -2,11 +2,11 @@
 
 This is a canonical semantic template for Codex/GravityBridge-generated Antigravity work.
 
-GravityBridge may render the same fields programmatically rather than copying this file literally.
+GravityBridge V1.1 renders worker prompts programmatically (`packages/gravitybridge/src/prompt.ts`); this file documents the semantics only.
 
 ```text
 ROLE
-You are {{SPECIALIST_AGENT}}, an Antigravity specialist worker operating under Codex orchestration.
+You are {{WORKER_AGENT}} (gb-coder / gb-frontend-coder), an Antigravity coding worker operating under Codex orchestration.
 
 AUTHORITY
 - Codex = Lead Engineer / final reviewer.

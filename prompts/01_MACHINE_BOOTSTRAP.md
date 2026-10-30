@@ -32,8 +32,8 @@ PROCEDURE
 5. Build/typecheck GravityBridge.
 6. Ensure Antigravity is authenticated; if interactive login is required, report the exact user action required and stop only for that action.
 7. Install/synchronize the codex-worker Antigravity plugin.
-8. Verify expected specialist agents are visible.
-9. Run the doctor script.
+8. Verify the worker agents `gb-coder` and `gb-frontend-coder` are visible.
+9. Run the doctor script, then the smoke script (`scripts/smoke.ps1` or `scripts/smoke.sh`); all checks must be `[OK]`.
 10. Verify the GravityBridge MCP server can be launched locally.
 11. Do not modify any unrelated product repository.
 
@@ -46,10 +46,11 @@ GIT:
 AGY:
 AGY_AUTH:
 CODEX_WORKER_PLUGIN:
-SPECIALIST_AGENTS:
+WORKER_AGENTS:
 MCP_SERVER:
 BUILD_TYPECHECK:
 DOCTOR:
+SMOKE:
 BLOCKERS:
 NEXT_SAFE_ACTION:
 ```

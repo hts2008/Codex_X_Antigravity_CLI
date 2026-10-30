@@ -30,7 +30,7 @@ OPERATING RULES
    - CODEX_DIRECT
    - ANTIGRAVITY_DELEGATE
 6. Delegate only bounded tasks through GravityBridge.
-7. Select the most suitable Antigravity specialist agent.
+7. Select the worker agent (`gb-coder`, or `gb-frontend-coder` for UI implementation).
 8. When a delegated worker completes:
    - inspect worker result;
    - inspect event trace when useful;

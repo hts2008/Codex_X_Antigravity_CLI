@@ -40,7 +40,7 @@ Về ép phạm vi: chỉ kiểm tra sau (đơn giản, nhưng file sai đã b�
 
 ### Giai đoạn 1 — Nền tảng V1.1 (đã xong trong PR này)
 **Mục tiêu:** sửa toàn bộ lỗi C1–C4 và nhóm H.
-**Tiêu chí thành công:** typecheck + build + 16 test tự động pass; test e2e với Antigravity giả bao phủ: file mới, vi phạm phạm vi, khai sai, validation, rework + diff theo lượt, blocked, kết quả sai cấu trúc, chặn lỗi lặp, huỷ, runner chết, trùng `task_id`, quyết định của hook; CI xanh trên Linux và Windows.
+**Tiêu chí thành công:** typecheck + build + 17 test tự động pass; test e2e với Antigravity giả bao phủ: file mới, vi phạm phạm vi, khai sai, validation, rework + diff theo lượt, blocked, kết quả sai cấu trúc, chặn lỗi lặp, huỷ, runner chết, trùng `task_id`, quyết định của hook; CI xanh trên Linux và Windows.
 
 ### Giai đoạn 2 — Kiểm chứng với Antigravity thật (cần chủ repo chạy, ~10 phút)
 **Mục tiêu:** xác nhận các giả định chỉ kiểm chứng được trên máy có `agy` đăng nhập.

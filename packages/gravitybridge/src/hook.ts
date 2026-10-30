@@ -7,7 +7,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { locateWorktree, taskDirByKey } from "./paths.js";
+import { canonicalPath, locateWorktree, taskDirByKey } from "./paths.js";
 import { scopeViolation } from "./scope.js";
 import { loadTaskRecordByKey } from "./store.js";
 
@@ -46,7 +46,7 @@ export async function decide(input: any): Promise<{ verdict: Verdict; logDir?: s
   if (WRITE_TOOLS.has(name)) {
     const target = typeof args.TargetFile === "string" ? args.TargetFile : "";
     if (!target) return { logDir, verdict: { decision: "deny", reason: "GravityBridge: missing TargetFile." } };
-    const abs = path.resolve(wt, target);
+    const abs = canonicalPath(path.resolve(wt, target));
     if (!isInside(wt, abs)) return { logDir, verdict: { decision: "deny", reason: `GravityBridge: ${target} is outside the task worktree.` } };
     const rel = path.relative(wt, abs);
     const v = scopeViolation(rel, { ...t.scope, mutating: t.mutating });
@@ -56,7 +56,7 @@ export async function decide(input: any): Promise<{ verdict: Verdict; logDir?: s
 
   if (name === "run_command") {
     const cmd = normalizeCommand(String(args.CommandLine ?? ""));
-    const cwd = typeof args.Cwd === "string" && args.Cwd ? path.resolve(wt, args.Cwd) : wt;
+    const cwd = typeof args.Cwd === "string" && args.Cwd ? canonicalPath(path.resolve(wt, args.Cwd)) : wt;
     if (!isInside(wt, cwd)) return { logDir, verdict: { decision: "deny", reason: "GravityBridge: commands must run inside the task worktree." } };
     if (GIT_MUTATING.test(cmd)) {
       return { logDir, verdict: { decision: "deny", reason: "GravityBridge: git commands that change history/branches/config are not allowed. Your work is snapshotted automatically." } };

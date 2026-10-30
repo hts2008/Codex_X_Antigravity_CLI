@@ -26,3 +26,12 @@ test("scope rules", () => {
   assert.equal(v.length, 1);
   assert.match(v[0], /server\/old\.ts/);
 });
+
+test("canonicalPath handles not-yet-existing files", async () => {
+  const { canonicalPath } = await import("../src/paths.ts");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const fs = await import("node:fs");
+  const real = fs.realpathSync.native(os.tmpdir());
+  assert.equal(canonicalPath(path.join(os.tmpdir(), "gb-nope", "x.txt")), path.join(real, "gb-nope", "x.txt"));
+});

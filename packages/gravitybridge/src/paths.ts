@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,9 +28,27 @@ export function siblingModule(name: string): string {
   return path.join(moduleDir, `${name}${runningFromSource ? ".ts" : ".js"}`);
 }
 
+/** Canonical absolute path: resolves symlinks and Windows 8.3 short names (C:\\Users\\RUNNER~1 -> long name). */
+export function canonicalPath(p: string): string {
+  const resolved = path.resolve(p);
+  // Canonicalise the deepest existing ancestor so not-yet-created files work too.
+  let base = resolved;
+  const rest: string[] = [];
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(base), ...rest);
+    } catch {
+      const parent = path.dirname(base);
+      if (parent === base) return resolved;
+      rest.unshift(path.basename(base));
+      base = parent;
+    }
+  }
+}
+
 export function normalizeRepoPath(repoPath: string): string {
-  const resolved = path.resolve(repoPath);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  const canonical = canonicalPath(repoPath);
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
 }
 
 export function repoKey(repoPath: string): string {
@@ -67,8 +86,8 @@ export function worktreeDir(repoPath: string, taskId: string): string {
  * Used by the Antigravity hook to discover which task contract applies.
  */
 export function locateWorktree(p: string): { key: string; taskId: string; worktree: string } | null {
-  const root = path.resolve(worktreesRoot());
-  const target = path.resolve(p);
+  const root = canonicalPath(worktreesRoot());
+  const target = canonicalPath(p);
   const rel = path.relative(root, target);
   if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
   const [key, taskId] = rel.split(path.sep);

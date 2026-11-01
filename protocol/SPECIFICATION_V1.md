@@ -1,6 +1,6 @@
-# GravityBridge Technical Specification V1.1
+# GravityBridge Technical Specification V1.2
 
-Status: normative for `packages/gravitybridge` 1.1.x. (File name kept for link stability.)
+Status: normative for `packages/gravitybridge` 1.2.x. (File name kept for link stability.)
 Single sources of truth in code: states/transitions `src/state.ts`, contracts `src/types.ts` (JSON Schemas in `schemas/` are generated from it: `npm run gen:schemas`).
 
 ## 1. Objective
@@ -85,7 +85,7 @@ Every tool response includes `next_action`.
 
 ## 10. Evidence computed per turn (TurnSummary)
 
-`setup` (bridge-run, once until success), `exit_code`, `agy_status`, `worker_result`, `turn_changed_files`, cumulative `changed_files`, `scope_violations`, `claim_mismatches` (task_id; files claimed vs git), `git_violations`, `permission_notices` (stderr), `tool_errors`, `bridge_validation` (bridge re-runs `validation_commands` after completed turns), `usage`.
+`setup` (bridge-run, once until success), `exit_code`, `agy_status`, `worker_result`, `turn_changed_files`, cumulative `changed_files`, `scope_violations`, `claim_mismatches` (task_id; files claimed vs git), `git_violations`, `permission_notices` (stderr), `tool_errors`, `bridge_validation` (bridge re-runs `validation_commands` after completed turns), `usage` (tokens of this turn: sum of DONE `step_update.usage`; fallback = session-cumulative `result.usage` minus the previous value for the same conversation), `reported_usage` (raw `result.usage`), `tool_steps`, `tool_counts` (tool calls by name), `budget_stop`. The record keeps `usage_total` (all turns).
 
 ## 11. Scope enforcement (two layers)
 
@@ -94,9 +94,20 @@ Every tool response includes `next_action`.
 
 ## 12. Contracts
 
-- Task Contract: `schemas/task.schema.json` (key fields: `task_id`, `goal`, `scope`, `acceptance_criteria`, `context`, `setup_commands`, `validation_commands`, `allowed_commands`, `worker{agent,model,effort,print_timeout}`, `limits{max_retries,max_rework_cycles,max_blocker_answers,setup_timeout,validation_timeout}`).
+- Task Contract: `schemas/task.schema.json` (key fields: `task_id`, `goal`, `scope`, `acceptance_criteria`, `context`, `setup_commands`, `validation_commands`, `allowed_commands`, `worker{agent,model,effort,print_timeout}`, `limits{max_retries,max_rework_cycles,max_blocker_answers,setup_timeout,validation_timeout,max_turn_tokens,max_task_tokens,max_turn_tool_steps}`, `related_tasks`).
 - Result Contract: `schemas/result.schema.json` (strict; unknown keys rejected).
 - Review: `schemas/review.schema.json` (`decision` ACCEPT/REWORK/REJECT/TAKEOVER, `blocking_findings`, `non_blocking_findings`, `override_reason`).
+
+## 12a. Token budgets and efficiency (V1.2)
+
+- "tokens" = `total_tokens` (input + output; cache reads reported separately, not counted).
+- While a turn runs, the runner sums step usage and counts tool calls. When `max_turn_tokens` (default 1.5M), `max_task_tokens` (default 4M, includes earlier turns) or `max_turn_tool_steps` (default 250) is reached, it kills the worker. The turn ends `WORKER_FAILED` with `Budget stop: …`; partial work is snapshotted. `0` disables a limit.
+- `retry_task` and `continue_task` are refused once `usage_total.total_tokens >= max_task_tokens` (→ TAKEOVER/REJECT or a new narrower task).
+- `await_task` progress shows live `turn_tokens` and `turn_tool_calls` (runner writes them to `run.json` every ≤ 3 s). Summaries show `budgets.task_tokens`, `usage` (task total, latest turn, top tools) and `efficiency_warnings`.
+- `start_task` returns non-blocking `contract_warnings` (compressed/glued wording, empty `context`, whole-repo scope, very long goal, no validation, `effort=high` on a small task).
+- `related_tasks` (≤ 5 ids in the same repo): the initial prompt includes each one's state, goal, changed files, worker summary and non-blocking review notes (≤ 8 000 chars).
+- Worker prompts contain efficiency rules (read only what is needed, no re-reads, quiet output, validate once at the end, stop when looping); rework prompts tell the worker to rely on the conversation context instead of re-reading.
+- Default `worker.effort` is `medium`.
 
 ## 13. Security
 
@@ -111,6 +122,6 @@ Every tool response includes `next_action`.
 - Agent names from a plugin may need a namespace on some agy versions; the smoke test reveals this.
 - On Windows `agy` must resolve to an executable; otherwise set `GRAVITYBRIDGE_AGY` to its full path.
 
-## 15. Definition of done (V1.1)
+## 15. Definition of done (V1.2)
 
-typecheck + build + tests pass on Linux and Windows CI; fake-worker e2e covers new files, scope violation, claim mismatch, validation, rework/last-turn diff, blocked, invalid result, same-failure guard, cancel, orphan reconciliation, duplicate task id, hook decisions; `scripts/smoke` passes against real Antigravity.
+typecheck + build + tests pass on Linux and Windows CI; fake-worker e2e covers new files, scope violation, claim mismatch, validation, rework/last-turn diff, blocked, invalid result, same-failure guard, cancel, orphan reconciliation, duplicate task id, hook decisions, per-turn usage, token and tool-step budget stops, task-budget retry refusal, related-task context, contract lint; `scripts/smoke` passes against real Antigravity.

@@ -119,7 +119,7 @@ node ./packages/gravitybridge/dist/index.js
 
 The setup script registers the server with `codex mcp add gravitybridge -- node <abs>/packages/gravitybridge/dist/index.js` (absolute path). If the codex CLI is not available, it prints the `~/.codex/config.toml` block to add manually.
 
-A healthy MCP tool surface for V1.1 includes:
+A healthy MCP tool surface for V1.2 includes:
 
 - `worker_health`, `list_tasks`, `get_task`
 - `start_task`, `await_task`, `continue_task`, `retry_task`, `cancel_task`

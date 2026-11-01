@@ -2,7 +2,7 @@
 
 This is a canonical semantic template for Codex/GravityBridge-generated Antigravity work.
 
-GravityBridge V1.1 renders worker prompts programmatically (`packages/gravitybridge/src/prompt.ts`); this file documents the semantics only.
+GravityBridge V1.2 renders worker prompts programmatically (`packages/gravitybridge/src/prompt.ts`); this file documents the semantics only.
 
 ```text
 ROLE

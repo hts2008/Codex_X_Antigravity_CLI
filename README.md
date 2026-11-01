@@ -8,7 +8,7 @@ Repo này giúp **Codex** điều phối **Antigravity CLI** khi làm phần m�
 
 > "Antigravity báo xong" **không** có nghĩa là xong. Chỉ khi Codex review bằng chứng và chấp nhận thì mới tính.
 
-Trạng thái: **V1.1** — vòng lặp bất đồng bộ, có kiểm thử tự động trên Linux + Windows. Xem kế hoạch và lý do thay đổi ở [docs/IMPROVEMENT_PLAN.md](./docs/IMPROVEMENT_PLAN.md).
+Trạng thái: **V1.2** — vòng lặp bất đồng bộ + **kiểm soát token** (đếm token từng lượt, tự dừng khi vượt ngân sách, cảnh báo cách giao việc tốn kém), có kiểm thử tự động trên Linux + Windows. Xem kế hoạch và lý do thay đổi ở [docs/IMPROVEMENT_PLAN.md](./docs/IMPROVEMENT_PLAN.md).
 
 ---
 
@@ -66,6 +66,10 @@ Lưu ý cho bạn:
 2. Không tự sửa code trong thư mục worktree (`~/.gravitybridge/worktrees/...`) khi task đang chạy.
 3. Nếu Codex hoặc máy bị khởi động lại giữa chừng: chỉ cần bảo Codex *"gọi list_tasks để xem việc dang dở"*. Task đang chạy vẫn tiếp tục ở nền; task bị chết giữa chừng sẽ được đánh dấu `WORKER_FAILED` để Codex quyết định chạy lại hay tự làm.
 
+### Vì sao token đầu vào (input) luôn lớn hơn đầu ra (output) rất nhiều?
+
+Mỗi lần Antigravity mở một file hoặc chạy một lệnh là một lần gọi model, và lần nào cũng phải gửi lại **toàn bộ** cuộc hội thoại (lời dặn, các file đã đọc, kết quả lệnh). Model chỉ viết ra vài dòng lệnh/đoạn code. Vì vậy tỉ lệ đọc : viết khoảng 50–100 : 1 là **bình thường**. Cách giảm thật sự là giảm *số lần gọi* và *độ dài hội thoại*: Codex chỉ rõ file cần đọc, viết mục tiêu bằng câu rõ ràng, gộp việc nhỏ cùng chủ đề, tiêu chí nghiệm thu cụ thể để không phải sửa đi sửa lại. Từ V1.2, Codex được nhắc tự động các điều này (`contract_warnings`, `efficiency_warnings`).
+
 Gợi ý câu lệnh theo vòng đời dự án: [prompts/12_HUMAN_RUNBOOK.md](./prompts/12_HUMAN_RUNBOOK.md) và [prompts/13_PROMPT_USAGE_ORDER.md](./prompts/13_PROMPT_USAGE_ORDER.md).
 
 ## 3. Cơ chế an toàn (vì sao tin được kết quả)
@@ -79,6 +83,7 @@ Gợi ý câu lệnh theo vòng đời dự án: [prompts/12_HUMAN_RUNBOOK.md](.
 | Việc dài làm Codex bị timeout | Mọi lệnh trả về trong < 1 phút; Antigravity chạy ở tiến trình nền riêng. |
 | Treo mãi ở trạng thái "đang chạy" | Có watchdog + hạn chót; tiến trình chết được phát hiện và đánh dấu. |
 | Lặp vô hạn | Giới hạn số lần chạy lại / sửa / hỏi đáp; cùng một lỗi 2 lần liên tiếp thì bắt buộc Codex tự xử lý. |
+| Đốt token / hết hạn mức | Bridge đếm token từng bước khi Antigravity chạy. Vượt ngân sách (mặc định 1,5 triệu token/lượt, 4 triệu token/việc, 250 lần gọi công cụ/lượt) thì tự dừng, giữ lại phần đã làm và báo Codex. Codex thấy số token và gợi ý giao việc tiết kiệm hơn. |
 | Lộ khoá bí mật | Biến môi trường chứa token/khoá (OpenAI, GitHub, cloud…) bị loại bỏ trước khi chạy Antigravity. |
 | Mất việc do gọi trùng | Không bao giờ tự xoá worktree/nhánh cũ; trùng `task_id` thì báo lỗi. |
 
@@ -104,7 +109,8 @@ Ví dụ Task Contract: [examples/task.frontend-ui.json](./examples/task.fronten
 packages/gravitybridge/      MCP server (TypeScript)
   src/index.ts               các MCP tool
   src/jobs.ts                vòng đời task (bất đồng bộ)
-  src/runner.ts              tiến trình nền chạy 1 lượt Antigravity + thu bằng chứng
+  src/runner.ts              tiến trình nền chạy 1 lượt Antigravity + thu bằng chứng + đếm token
+  src/usage.ts, src/lint.ts  tính token / ngân sách; kiểm tra chất lượng Task Contract
   src/hook.ts                hook PreToolUse chặn phạm vi
   src/install.ts             setup / doctor / smoke
   test/                      kiểm thử tự động với Antigravity giả
@@ -113,7 +119,7 @@ skills/antigravity-orchestration/         skill cho Codex
 schemas/                     JSON Schema (sinh tự động từ src/types.ts)
 protocol/  prompts/  FRAMEWORK.md         quy trình và tài liệu
 scripts/                     setup / doctor / smoke / bootstrap-target
-docs/IMPROVEMENT_PLAN.md     phương án cải tiến V1.1
+docs/IMPROVEMENT_PLAN.md     phương án cải tiến V1.1 → V1.2
 ```
 
 ## 7. Cho người phát triển repo

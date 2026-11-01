@@ -8,7 +8,7 @@ import {
 } from "./jobs.js";
 import { ReviewSchema, TaskContractSchema } from "./types.js";
 
-export const VERSION = "1.1.0";
+export const VERSION = "1.2.0";
 
 function response(value: unknown) {
   const structured = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : { value };
@@ -43,14 +43,14 @@ export function createServer(): McpServer {
   server.registerTool("start_task", {
     title: "Start an Antigravity coding task (async)",
     description:
-      "Validate the Task Contract, create an isolated worktree on branch gb/<task_id> from the current clean HEAD, and start the Antigravity worker in the background. Returns immediately with state RUNNING. Then call await_task.",
+      "Validate the Task Contract, create an isolated worktree on branch gb/<task_id> from the current clean HEAD, and start the Antigravity worker in the background. Returns immediately with state RUNNING (plus contract_warnings that make the task cheaper next time). Then call await_task.",
     inputSchema: z.object({ repo_path: repo, task: TaskContractSchema }),
   }, safe(async ({ repo_path, task }) => await startTask(repo_path, task)));
 
   server.registerTool("await_task", {
     title: "Wait for a task to change state",
     description:
-      "Long-poll up to wait_seconds (max 50) for a RUNNING task to finish. Returns a compact summary: state, next_action, changed files, scope violations, worker claims vs evidence, bridge validation results. Call repeatedly while state is RUNNING.",
+      "Long-poll up to wait_seconds (max 50) for a RUNNING task to finish. Returns a compact summary: state, next_action, changed files, scope violations, worker claims vs evidence, bridge validation results, token usage/budgets and efficiency_warnings (while running: live turn_tokens and turn_tool_calls). Call repeatedly while state is RUNNING.",
     inputSchema: z.object({ repo_path: repo, task_id: taskId, wait_seconds: z.number().int().min(0).max(50).default(45) }),
   }, safe(async ({ repo_path, task_id, wait_seconds }) => await awaitTask(repo_path, task_id, wait_seconds)));
 
@@ -64,7 +64,7 @@ export function createServer(): McpServer {
   server.registerTool("retry_task", {
     title: "Retry a failed or canceled execution",
     description:
-      "Re-run a WORKER_FAILED or CANCELED task in the same worktree. Enforces max_retries and refuses when the same failure repeated twice (then fix the cause or TAKEOVER).",
+      "Re-run a WORKER_FAILED or CANCELED task in the same worktree. Enforces max_retries and max_task_tokens, and refuses when the same failure repeated twice (then fix the cause or TAKEOVER).",
     inputSchema: z.object({ repo_path: repo, task_id: taskId }),
   }, safe(async ({ repo_path, task_id }) => await retryTask(repo_path, task_id)));
 
@@ -82,7 +82,7 @@ export function createServer(): McpServer {
 
   server.registerTool("list_tasks", {
     title: "List tasks",
-    description: "List GravityBridge tasks (optionally for one repository) with state and next action. Use at session start to recover work.",
+    description: "List GravityBridge tasks (optionally for one repository) with state, next action and tokens used. Use at session start to recover work.",
     inputSchema: z.object({ repo_path: repo.optional(), include_closed: z.boolean().default(false) }),
   }, safe(async ({ repo_path, include_closed }) => await listTasks(repo_path, include_closed)));
 

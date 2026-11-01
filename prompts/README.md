@@ -108,6 +108,12 @@ Dùng:
 `12_HUMAN_RUNBOOK.md`
 `13_PROMPT_USAGE_ORDER.md`
 
+### Nếu máy/dự án đang dùng bản cũ (V1.0 hoặc V1.1)
+
+Dùng:
+
+`14_UPGRADE_V1_2.md`
+
 ## Luồng mặc định
 
 ```text

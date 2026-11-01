@@ -18,7 +18,7 @@ import { buildPrompt, type PromptExtras } from "./prompt.js";
 import { isAlive, killTree } from "./process.js";
 import { assertTransition, failureSignature, nextActionHint, TERMINAL_STATES } from "./state.js";
 import {
-  cancelFile, claimTaskDir, listTaskRecords, loadTaskRecord, loadTurn, readEvents, readTaskText, runFile,
+  cancelFile, claimTaskDir, isLegacyRecord, listLegacyRecords, listTaskRecords, loadRawRecord, loadTaskRecord, loadTurn, readEvents, readTaskText, runFile,
   saveTaskRecord, writeTaskFile, type RunInfo,
 } from "./store.js";
 import {
@@ -328,12 +328,20 @@ async function relatedContext(repoPath: string, selfId: string, ids: string[]): 
   const blocks: string[] = [];
   for (const id of ids) {
     if (id === selfId) throw new Error("related_tasks must not contain the task itself.");
-    let r: TaskRecord;
-    try {
-      r = await loadTaskRecord(repoPath, id);
-    } catch {
-      throw new Error(`related_tasks: task ${id} not found in this repository.`);
+    const raw = await loadRawRecord(repoPath, id).catch(() => null);
+    if (!raw) throw new Error(`related_tasks: task ${id} not found in this repository.`);
+    if (isLegacyRecord(raw)) {
+      const files: string[] = Array.isArray(raw.changed_files) ? raw.changed_files.map(String).slice(0, 30) : [];
+      const summary = raw.last_worker_envelope?.structured_output?.summary ?? raw.last_worker_envelope?.response;
+      blocks.push([
+        `### ${id} (${raw.state ?? "?"}, GravityBridge V1.0)`,
+        raw.task?.goal ? `Goal: ${head(String(raw.task.goal), 400)}` : "",
+        files.length ? `Files changed: ${files.join(", ")}` : "",
+        summary ? `Worker summary: ${head(String(summary), 1_200)}` : "",
+      ].filter(Boolean).join("\n"));
+      continue;
     }
+    const r = raw as TaskRecord;
     const last = await latestTurn(r);
     const files = r.changed_files.slice(0, 30).map((f) => f.path);
     const notes = r.last_review?.non_blocking_findings?.slice(0, 5) ?? [];
@@ -486,9 +494,23 @@ export async function listTasks(repoPathInput?: string, includeClosed = false) {
     });
     total += r.usage_total?.total_tokens ?? 0;
   }
+  const legacy = await listLegacyRecords(repoPath);
+  const states: Record<string, number> = {};
+  for (const r of legacy) states[String(r.state ?? "?")] = (states[String(r.state ?? "?")] ?? 0) + 1;
+  const open = legacy.filter((r) => !["ACCEPTED", "REJECTED", "CODEX_TAKEOVER"].includes(String(r.state)));
   return {
     tasks: out, running: out.filter((t) => t.state === "RUNNING").length, max_parallel: maxParallel(),
     tokens_total: total ? fmtTokens(total) : undefined,
+    legacy_v1_0: legacy.length
+      ? {
+          count: legacy.length,
+          states,
+          not_closed: (includeClosed ? legacy : open).slice(0, 50).map((r) => ({
+            task_id: r.task?.task_id, state: r.state, branch: r.branch_name, updated_at: r.updated_at,
+          })),
+          note: "Created by GravityBridge V1.0: read-only. Check the not_closed ones with git (branch gb/<task_id>): merge manually if accepted, otherwise delete the branch. Never reuse their task_ids.",
+        }
+      : undefined,
   };
 }
 

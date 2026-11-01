@@ -40,6 +40,8 @@ macOS / Linux:
 
 Sau khi setup xong, **khởi động lại Codex**.
 
+**Đã từng dùng bản cũ (V1.0/V1.1)?** Dán prompt [prompts/14_UPGRADE_V1_2.md](./prompts/14_UPGRADE_V1_2.md) cho Codex: Codex tự cập nhật, kiểm tra, dọn cấu hình cũ, chỉnh file hướng dẫn của dự án theo V1.2. Việc tạo bằng V1.0 vẫn xem được nhưng chỉ đọc.
+
 ## 2. Dùng hằng ngày
 
 Bạn chỉ cần nói chuyện với Codex. Ví dụ:

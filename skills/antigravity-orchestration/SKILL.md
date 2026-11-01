@@ -99,6 +99,7 @@ Then `cleanup_task(repo_path, task_id, delete_branch=true)`. Never let the worke
 
 ## Failure handling
 
+- Tasks created by GravityBridge V1.0 are read-only (`list_tasks` → `legacy_v1_0`). Handle their `gb/*` branches with git; never reuse their ids.
 - `retry_task` is for execution failures (crash, timeout, invalid result), not for quality issues (use REWORK).
 - `Budget stop` → the task was too vague or too big. Rewrite it (context, plain goal, smaller scope) as a new task with `related_tasks`, or TAKEOVER. Retry/rework is refused once `max_task_tokens` is used up.
 - The bridge refuses a retry after the **same failure twice**: fix the cause (missing setup command, denied command, wrong contract) or TAKEOVER.

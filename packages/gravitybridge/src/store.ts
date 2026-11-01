@@ -30,28 +30,59 @@ export async function saveTaskRecord(record: TaskRecord): Promise<void> {
   await writeJsonAtomic(recordFile(record.repo_path, record.task.task_id), record);
 }
 
+/** Records written by GravityBridge V1.0 (no turns, different evidence model). Read-only in V1.1+. */
+export function isLegacyRecord(r: unknown): boolean {
+  const x = r as Partial<TaskRecord> | null;
+  return !x || x.schema_version !== "1.1" || !Array.isArray(x.turns) || !x.task;
+}
+
+export function legacyMessage(taskId: string): string {
+  return `Task ${taskId} was created by an older GravityBridge (V1.0) and is read-only now: it cannot be awaited, continued, retried, reviewed or cleaned up by this version. `
+    + `Its branch gb/${taskId} and worktree are untouched: inspect it with git, integrate manually (git merge --squash gb/${taskId}) if it was accepted and not merged yet, or delete it. Start new work with a new task_id.`;
+}
+
+/** Raw metadata.json (any version) or null. */
+export async function loadRawRecord(repoPath: string, taskId: string): Promise<Record<string, any> | null> {
+  return await readJson<Record<string, any>>(recordFile(repoPath, taskId));
+}
+
 export async function loadTaskRecord(repoPath: string, taskId: string): Promise<TaskRecord> {
   const record = await readJson<TaskRecord>(recordFile(repoPath, taskId));
   if (!record) throw new Error(`Task not found: ${taskId} (repo ${repoPath}).`);
+  if (isLegacyRecord(record)) throw new Error(legacyMessage(taskId));
   return record;
 }
 
 export async function loadTaskRecordByKey(key: string, taskId: string): Promise<TaskRecord | null> {
-  return await readJson<TaskRecord>(path.join(taskDirByKey(key, taskId), "metadata.json"));
+  const r = await readJson<TaskRecord>(path.join(taskDirByKey(key, taskId), "metadata.json"));
+  return r && !isLegacyRecord(r) ? r : null;
 }
 
 export async function listTaskRecords(repoPath?: string): Promise<TaskRecord[]> {
+  return (await scanRecords(repoPath)).current;
+}
+
+/** Legacy (V1.0) records, returned raw for read-only listing. */
+export async function listLegacyRecords(repoPath?: string): Promise<Record<string, any>[]> {
+  return (await scanRecords(repoPath)).legacy;
+}
+
+async function scanRecords(repoPath?: string): Promise<{ current: TaskRecord[]; legacy: Record<string, any>[] }> {
   const keys = repoPath ? [repoKey(repoPath)] : await safeReaddir(tasksRoot());
-  const out: TaskRecord[] = [];
+  const current: TaskRecord[] = [];
+  const legacy: Record<string, any>[] = [];
   for (const key of keys) {
     for (const id of await safeReaddir(path.join(tasksRoot(), key))) {
       try {
-        const r = await loadTaskRecordByKey(key, id);
-        if (r) out.push(r);
+        const r = await readJson<Record<string, any>>(path.join(taskDirByKey(key, id), "metadata.json"));
+        if (!r) continue;
+        if (isLegacyRecord(r)) legacy.push(r);
+        else current.push(r as TaskRecord);
       } catch { /* skip unreadable */ }
     }
   }
-  return out.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const by = (a: any, b: any) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""));
+  return { current: current.sort(by), legacy: legacy.sort(by) };
 }
 
 async function safeReaddir(dir: string): Promise<string[]> {

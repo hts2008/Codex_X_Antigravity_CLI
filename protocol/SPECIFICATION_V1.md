@@ -109,6 +109,10 @@ Every tool response includes `next_action`.
 - Worker prompts contain efficiency rules (read only what is needed, no re-reads, quiet output, validate once at the end, stop when looping); rework prompts tell the worker to rely on the conversation context instead of re-reading.
 - Default `worker.effort` is `medium`.
 
+## 12b. Legacy records
+
+Records without `schema_version: "1.1"` + `turns` (GravityBridge V1.0) are read-only: excluded from parallelism counts and tool operations (clear error), summarised by `list_tasks.legacy_v1_0` (count, states, not-closed ids), and usable as `related_tasks`.
+
 ## 13. Security
 
 - No `--dangerously-skip-permissions`. No merge/push authority for the worker.

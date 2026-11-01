@@ -38,6 +38,7 @@ GB-H08 SESSION_CLOSE
 | Situation | Prompt |
 |---|---|
 | New machine | GB-H01 |
+| Existing machine/project on V1.0 or V1.1 | GB-H14 UPGRADE_V1_2 |
 | New target project | GB-H02 |
 | New Codex session | GB-H03 |
 | Normal work | GB-H04 |

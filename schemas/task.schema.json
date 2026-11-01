@@ -71,12 +71,24 @@
     },
     "context": {
       "default": [],
-      "description": "Files the worker should read first.",
+      "description": "Files the worker should read first. Exact paths (optionally 'path#symbol' or 'path:10-80') keep exploration and token cost low.",
       "maxItems": 50,
       "type": "array",
       "items": {
         "type": "string",
         "minLength": 1
+      }
+    },
+    "related_tasks": {
+      "default": [],
+      "description": "Earlier GravityBridge tasks in the same repo this task builds on. The bridge injects their goal, changed files and worker summary so the worker does not re-explore.",
+      "maxItems": 5,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 96,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9_-]+)*$"
       }
     },
     "setup_commands": {
@@ -112,7 +124,7 @@
     "worker": {
       "default": {
         "agent": "gb-coder",
-        "effort": "high",
+        "effort": "medium",
         "print_timeout": "30m"
       },
       "type": "object",
@@ -129,7 +141,8 @@
           "maxLength": 160
         },
         "effort": {
-          "default": "high",
+          "default": "medium",
+          "description": "low = mechanical edits, medium = normal tasks (default), high = tricky logic only (more thinking tokens).",
           "type": "string",
           "enum": [
             "low",
@@ -150,7 +163,10 @@
         "max_rework_cycles": 3,
         "max_blocker_answers": 3,
         "setup_timeout": "20m",
-        "validation_timeout": "15m"
+        "validation_timeout": "15m",
+        "max_turn_tokens": 1500000,
+        "max_task_tokens": 4000000,
+        "max_turn_tool_steps": 250
       },
       "type": "object",
       "properties": {
@@ -181,6 +197,27 @@
           "default": "15m",
           "type": "string",
           "pattern": "^[0-9]+[smh]$"
+        },
+        "max_turn_tokens": {
+          "default": 1500000,
+          "description": "Stop a worker turn once it used this many tokens (input+output, cache reads excluded). 0 = no limit.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000000
+        },
+        "max_task_tokens": {
+          "default": 4000000,
+          "description": "Token budget for the whole task (all turns). Retry/rework is refused once reached. 0 = no limit.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500000000
+        },
+        "max_turn_tool_steps": {
+          "default": 250,
+          "description": "Stop a worker turn after this many tool calls (file reads, searches, commands). 0 = no limit.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
         }
       }
     },

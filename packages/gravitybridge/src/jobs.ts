@@ -13,7 +13,8 @@ import {
   headSha, removeWorktree, resolveCommit,
 } from "./git.js";
 import { parseDuration, runningFromSource, siblingModule, taskDir } from "./paths.js";
-import { buildPrompt } from "./prompt.js";
+import { lintContract } from "./lint.js";
+import { buildPrompt, type PromptExtras } from "./prompt.js";
 import { isAlive, killTree } from "./process.js";
 import { assertTransition, failureSignature, nextActionHint, TERMINAL_STATES } from "./state.js";
 import {
@@ -21,8 +22,9 @@ import {
   saveTaskRecord, writeTaskFile, type RunInfo,
 } from "./store.js";
 import {
-  ReviewSchema, TaskContractSchema, type Review, type TaskRecord, type TaskState, type TurnKind, type TurnSummary,
+  ReviewSchema, TaskContractSchema, tokenLimits, type Review, type TaskRecord, type TaskState, type TurnKind, type TurnSummary,
 } from "./types.js";
+import { budgetLine, fmtTokens, usageLine, type TokenUsage } from "./usage.js";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const STARTUP_GRACE_MS = 60_000;
@@ -57,6 +59,43 @@ export async function resolveRepo(repoPath: string): Promise<string> {
 // ---------------------------------------------------------------------------
 // Compact summary returned by most tools (kept small to save Codex context).
 
+const EXPLORE_TOOLS = /^(view_file|view_code_item|view_file_outline|read_file|list_dir|find_by_name|grep_search|codebase_search|search)/;
+
+function nonEmpty<T>(a: T[]): T[] | undefined {
+  return a.length ? a : undefined;
+}
+
+function topTools(counts?: Record<string, number>): string | undefined {
+  if (!counts) return undefined;
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  return top.length ? top.map(([k, v]) => `${k} ${v}`).join(", ") : undefined;
+}
+
+/** Plain-language hints that tell Codex how to make the next contract cheaper. */
+export function efficiencyWarnings(record: TaskRecord, latest?: TurnSummary | null): string[] {
+  const w: string[] = [];
+  const l = tokenLimits(record.task);
+  const total = record.usage_total?.total_tokens ?? 0;
+  if (latest?.budget_stop) w.push(`Turn ${latest.turn} was stopped by a budget: ${latest.budget_stop}.`);
+  if (l.max_task_tokens && total >= l.max_task_tokens * 0.6) {
+    w.push(`Task used ${budgetLine(total, l.max_task_tokens)} of its token budget. Prefer TAKEOVER for small remaining fixes.`);
+  }
+  const files = Math.max(1, record.changed_files.length);
+  if (total >= 800_000 && total / files >= 300_000) {
+    w.push(`High cost for the size of the change: ${fmtTokens(total)} tokens for ${record.changed_files.length} changed file(s). Give exact context files/sections and plain-language goals.`);
+  }
+  if (latest?.tool_counts) {
+    const explore = Object.entries(latest.tool_counts).filter(([k]) => EXPLORE_TOOLS.test(k)).reduce((n, [, v]) => n + v, 0);
+    if (explore >= 60) w.push(`Worker made ${explore} read/search calls in turn ${latest.turn}: it had to explore. List the files and symbols to read in context.`);
+    const cmds = latest.tool_counts.run_command ?? 0;
+    if (cmds >= 25) w.push(`Worker ran ${cmds} commands in turn ${latest.turn}: use targeted, quiet validation commands.`);
+  }
+  if (record.rework_cycles >= 2) {
+    w.push(`${record.rework_cycles} rework cycles: each one replays the whole conversation. Make acceptance criteria checkable up front; fix tiny findings yourself.`);
+  }
+  return w;
+}
+
 export function summarize(record: TaskRecord, latest?: TurnSummary | null, extra: Record<string, unknown> = {}) {
   const t = record.task;
   const wr = latest?.worker_result;
@@ -75,7 +114,17 @@ export function summarize(record: TaskRecord, latest?: TurnSummary | null, extra
       rework_cycles: `${record.rework_cycles}/${t.limits.max_rework_cycles}`,
       blocker_answers: `${record.blocker_answers}/${t.limits.max_blocker_answers}`,
       same_failure_count: record.same_failure_count,
+      task_tokens: budgetLine(record.usage_total?.total_tokens ?? 0, tokenLimits(t).max_task_tokens),
     },
+    usage: record.usage_total || latest?.usage
+      ? {
+          task_total: usageLine(record.usage_total),
+          latest_turn: usageLine(latest?.usage),
+          latest_turn_tool_calls: latest?.tool_steps,
+          latest_turn_top_tools: topTools(latest?.tool_counts),
+        }
+      : undefined,
+    efficiency_warnings: nonEmpty(efficiencyWarnings(record, latest)),
     changed_files: record.changed_files.slice(0, 200).map((f) => `${f.status} ${f.old_path ? `${f.old_path} -> ` : ""}${f.path}`),
     scope_violations: record.scope_violations,
     last_error: record.last_error ? head(record.last_error, 1_500) : undefined,
@@ -189,14 +238,14 @@ function turnDeadline(record: TaskRecord, start: number): string {
   return new Date(start + ms).toISOString();
 }
 
-async function beginTurn(record: TaskRecord, kind: TurnKind, input?: string) {
+async function beginTurn(record: TaskRecord, kind: TurnKind, input?: string, extras: PromptExtras = {}, extra: Record<string, unknown> = {}) {
   const id = record.task.task_id;
   if (await runningCount() >= maxParallel()) {
     throw new Error(`Max parallel workers reached (${maxParallel()}). await_task on a running task first, or raise GRAVITYBRIDGE_MAX_PARALLEL.`);
   }
   assertTransition(id, record.state, "RUNNING");
   const turnNo = record.turns.length + 1;
-  await writeTaskFile(record.repo_path, id, path.join("prompts", `${turnNo}.md`), buildPrompt(record, kind, input));
+  await writeTaskFile(record.repo_path, id, path.join("prompts", `${turnNo}.md`), buildPrompt(record, kind, input, extras));
   await fs.rm(cancelFile(record.repo_path, id), { force: true });
   const now = Date.now();
   record.state = "RUNNING";
@@ -219,7 +268,7 @@ async function beginTurn(record: TaskRecord, kind: TurnKind, input?: string) {
   } finally {
     fsSync.closeSync(logFd);
   }
-  return summarize(record, null, { message: `Turn ${turnNo} (${kind}) started in the background. Call await_task.` });
+  return summarize(record, null, { message: `Turn ${turnNo} (${kind}) started in the background. Call await_task.`, ...extra });
 }
 
 export async function startTask(repoPathInput: string, rawTask: unknown) {
@@ -237,6 +286,7 @@ export async function startTask(repoPathInput: string, rawTask: unknown) {
     if (await branchExists(repoPath, `gb/${task.task_id}`)) {
       throw new Error(`Branch gb/${task.task_id} already exists. Choose a new task_id.`);
     }
+    const related = await relatedContext(repoPath, task.task_id, task.related_tasks);
     const dir = await claimTaskDir(repoPath, task.task_id);
     let wt: { branchName: string; worktreePath: string };
     try {
@@ -267,8 +317,43 @@ export async function startTask(repoPathInput: string, rawTask: unknown) {
     };
     await writeJsonAtomic(path.join(dir, "task.json"), record.task);
     await saveTaskRecord(record);
-    return await beginTurn(record, "initial");
+    const warnings = lintContract(task);
+    return await beginTurn(record, "initial", undefined, { related }, { contract_warnings: nonEmpty(warnings) });
   });
+}
+
+/** Render what related tasks already did, so the worker builds on it instead of re-exploring. */
+async function relatedContext(repoPath: string, selfId: string, ids: string[]): Promise<string | undefined> {
+  if (!ids.length) return undefined;
+  const blocks: string[] = [];
+  for (const id of ids) {
+    if (id === selfId) throw new Error("related_tasks must not contain the task itself.");
+    let r: TaskRecord;
+    try {
+      r = await loadTaskRecord(repoPath, id);
+    } catch {
+      throw new Error(`related_tasks: task ${id} not found in this repository.`);
+    }
+    const last = await latestTurn(r);
+    const files = r.changed_files.slice(0, 30).map((f) => f.path);
+    const notes = r.last_review?.non_blocking_findings?.slice(0, 5) ?? [];
+    blocks.push([
+      `### ${id} (${r.state})`,
+      `Goal: ${head(r.task.goal, 400)}`,
+      files.length ? `Files changed: ${files.join(", ")}${r.changed_files.length > 30 ? ", ..." : ""}` : "Files changed: (none)",
+      last?.worker_result ? `Worker summary: ${head(last.worker_result.summary, 1_200)}` : "",
+      notes.length ? `Codex review notes: ${notes.map((n) => head(n, 200)).join(" | ")}` : "",
+    ].filter(Boolean).join("\n"));
+  }
+  return head(blocks.join("\n\n"), 8_000);
+}
+
+function assertTaskBudget(record: TaskRecord) {
+  const l = tokenLimits(record.task);
+  const used = record.usage_total?.total_tokens ?? 0;
+  if (l.max_task_tokens && used >= l.max_task_tokens) {
+    throw new Error(`Task token budget exhausted (${budgetLine(used, l.max_task_tokens)}). record_review TAKEOVER or REJECT, or start a new, narrower task (use related_tasks to pass on what was done).`);
+  }
 }
 
 export async function continueTask(repoPathInput: string, taskId: string, feedback?: string) {
@@ -276,6 +361,7 @@ export async function continueTask(repoPathInput: string, taskId: string, feedba
   return await withLock(`${repoPath}:${taskId}`, async () => {
     const record = await load(repoPath, taskId);
     const l = record.task.limits;
+    if (record.state === "CHANGES_REQUESTED" || record.state === "BLOCKED") assertTaskBudget(record);
     if (record.state === "CHANGES_REQUESTED") {
       const text = feedback?.trim() || record.last_review?.blocking_findings.map((f, i) => `${i + 1}. ${f}`).join("\n");
       if (!text) throw new Error("feedback is required (no blocking_findings recorded in the last review).");
@@ -307,6 +393,7 @@ export async function retryTask(repoPathInput: string, taskId: string) {
     if (record.state === "WORKER_FAILED" && record.same_failure_count >= 2) {
       throw new Error(`The same failure happened ${record.same_failure_count} times in a row; retrying again is unlikely to help. Fix the cause (environment, permissions, task contract) or record_review TAKEOVER. Last error: ${head(record.last_error ?? "", 600)}`);
     }
+    assertTaskBudget(record);
     record.retries += 1;
     return await beginTurn(record, "retry");
   });
@@ -343,8 +430,12 @@ async function progress(record: TaskRecord) {
     }
   } catch { /* no events yet */ }
   const started = Date.parse(record.active_run?.started_at ?? record.updated_at);
+  const live = (await readJson<{ live?: { usage?: TokenUsage; tool_steps: number } }>(runFile(record.repo_path, record.task.task_id)).catch(() => null))?.live;
+  const l = tokenLimits(record.task);
   return {
     elapsed_seconds: Math.round((Date.now() - started) / 1000),
+    turn_tokens: live?.usage ? budgetLine(live.usage.total_tokens, l.max_turn_tokens) : undefined,
+    turn_tool_calls: live ? `${live.tool_steps}${l.max_turn_tool_steps ? ` / ${l.max_turn_tool_steps}` : ""}` : undefined,
     recent_steps: steps,
     last_tool: lastTool,
     last_message: lastText,
@@ -384,15 +475,21 @@ export async function getTask(repoPathInput: string, taskId: string) {
 export async function listTasks(repoPathInput?: string, includeClosed = false) {
   const repoPath = repoPathInput ? await resolveRepo(repoPathInput) : undefined;
   const out = [];
+  let total = 0;
   for (const r0 of await listTaskRecords(repoPath)) {
     const r = await reconcile(r0);
     if (!includeClosed && r.cleaned_up) continue;
     out.push({
       task_id: r.task.task_id, state: r.state, repo_path: r.repo_path, branch: r.branch_name,
       turns: r.turns.length, updated_at: r.updated_at, next_action: nextActionHint(r.state),
+      tokens: r.usage_total ? fmtTokens(r.usage_total.total_tokens) : undefined,
     });
+    total += r.usage_total?.total_tokens ?? 0;
   }
-  return { tasks: out, running: out.filter((t) => t.state === "RUNNING").length, max_parallel: maxParallel() };
+  return {
+    tasks: out, running: out.filter((t) => t.state === "RUNNING").length, max_parallel: maxParallel(),
+    tokens_total: total ? fmtTokens(total) : undefined,
+  };
 }
 
 export async function getTaskDiff(

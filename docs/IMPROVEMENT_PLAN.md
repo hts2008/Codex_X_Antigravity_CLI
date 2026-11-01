@@ -1,3 +1,31 @@
+# Phương án cải tiến GravityBridge (V1.1 → V1.2)
+
+## V1.2 — Kiểm soát token (mới)
+
+**Vấn đề quan sát được trên dự án thật** (dashboard 104 task): tổng ~50 triệu token (input 42,9M, output 7,1M) và 445M token đọc từ cache; một task điển hình 1,6M token, 491 hoạt động, 3 vòng rework. Hạn mức Gemini tuần còn 43%.
+
+**Nguyên nhân** (không phải lỗi bridge — lời giao việc của bridge chỉ ~1–2 nghìn token):
+1. Agent gửi lại toàn bộ hội thoại ở mỗi lần gọi công cụ → input ≈ số lần gọi × độ dài hội thoại.
+2. Mục tiêu bị viết nén, dính chữ ("SAMEcanonical", "855boundmetadata"), chỉ dẫn chiếu số task → worker phải tự khám phá, dễ sai → rework.
+3. Chuỗi task nhỏ nối tiếp → mỗi task đọc lại cùng file từ đầu.
+4. Rework nhiều vòng → phát lại cả hội thoại.
+5. Bridge có lưu `usage` nhưng không giới hạn, không báo cho Codex.
+
+**Đã làm:**
+- Đếm token **từng bước** (`step_update.usage`) và từng lượt, cộng dồn theo task (`usage_total`), số lần gọi công cụ theo tên (`tool_counts`).
+- Ngân sách tự dừng: `max_turn_tokens` (1,5M), `max_task_tokens` (4M), `max_turn_tool_steps` (250); `0` = không giới hạn. Vượt → `WORKER_FAILED` "Budget stop", giữ phần đã làm; hết ngân sách task thì không cho retry/rework.
+- `await_task` hiển thị token/lần gọi công cụ đang chạy; tóm tắt có `usage`, `budgets.task_tokens`, `efficiency_warnings`; `list_tasks` có token từng task và tổng.
+- `start_task` trả `contract_warnings`: mục tiêu viết nén, thiếu `context`, phạm vi cả repo, mục tiêu quá dài, không có lệnh kiểm tra, `effort=high` cho việc nhỏ.
+- `related_tasks`: bridge tự chèn kết quả các task trước (file đã đổi, tóm tắt, ghi chú review) vào lời giao việc → không phải khám phá lại.
+- Lời giao việc + agent `gb-coder`/`gb-frontend-coder` có quy tắc tiết kiệm (chỉ đọc file cần, không đọc lại, output ngắn, chạy kiểm tra một lần cuối, dừng khi lặp); lời giao rework dặn dùng ngữ cảnh sẵn có.
+- `effort` mặc định đổi `high` → `medium`.
+- Skill của Codex có mục "Token efficiency": cách viết hợp đồng tiết kiệm, khi nào tự sửa thay vì REWORK.
+- 6 test mới (tổng 23).
+
+**Cần kiểm chứng trên máy thật:** tên trường `usage` trong `step_update` đúng như tài liệu Antigravity (`input_tokens`, `output_tokens`, `thinking_tokens`, `cache_read_tokens`, `total_tokens`). Nếu agy không gửi usage theo bước, bridge vẫn tính từ sự kiện `result` cuối lượt và vẫn chặn theo số lần gọi công cụ.
+
+---
+
 # Phương án cải tiến GravityBridge V1.1
 
 Mục tiêu do chủ repo đặt ra: **Codex ra quyết định, điều phối, review. Antigravity CLI chỉ code theo chỉ thị của Codex.** Tài liệu này ghi lại vấn đề của V1.0, phương án đã chọn, những gì đã làm và những gì còn phải kiểm chứng trên máy thật.

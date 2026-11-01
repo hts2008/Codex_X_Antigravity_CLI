@@ -14,7 +14,10 @@ const conversation = get("--conversation") ?? `conv-${process.pid}`;
 const scenario = process.env.FAKE_AGY_SCENARIO ?? "ok";
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const write = (rel, content) => { fs.mkdirSync(path.dirname(rel), { recursive: true }); fs.writeFileSync(rel, content); };
-const tool = (name) => emit({ event: "step_update", step_update: { step_type: "tool", state: "DONE", tool_name: name, tool_info: { name } } });
+let stepIndex = 0;
+const tool = (name) => emit({ event: "step_update", step_update: { conversation_id: conversation, step_index: ++stepIndex, step_type: "tool", state: "DONE", tool_name: name, tool_info: { name } } });
+const think = (usage) => emit({ event: "step_update", step_update: { conversation_id: conversation, step_index: ++stepIndex, step_type: "agent_response", state: "DONE", text_delta: "...", usage } });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const result = (structured, status = "SUCCESS") => emit({
   event: "result",
   result: { conversation_id: conversation, status, response: "done", structured_output: structured, usage: { input_tokens: 10 } },
@@ -29,10 +32,26 @@ if (process.env.FAKE_AGY_ARGS_LOG) fs.appendFileSync(process.env.FAKE_AGY_ARGS_L
 
 switch (scenario) {
   case "ok":
+    think({ input_tokens: 1000, output_tokens: 200, thinking_tokens: 50, cache_read_tokens: 5000, total_tokens: 1200 });
+    tool("view_file");
     write("src/new.txt", "new file\n");
     fs.appendFileSync("src/a.txt", "changed\n");
     tool("write_to_file");
+    think({ input_tokens: 100, output_tokens: 10, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 110 });
     result(base({ files_changed: ["src/new.txt", "src/a.txt"] }));
+    break;
+  case "tokenhog":
+    write("src/new.txt", "partial\n");
+    for (let i = 0; i < 50; i++) {
+      think({ input_tokens: 290_000, output_tokens: 10_000, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 300_000 });
+      tool("view_file");
+      await sleep(100);
+    }
+    result(base({ files_changed: ["src/new.txt"] }));
+    break;
+  case "toolhog":
+    for (let i = 0; i < 200; i++) { tool("grep_search"); await sleep(20); }
+    result(base());
     break;
   case "smoke":
     write("src/greeting.txt", "hello from gravitybridge\n");

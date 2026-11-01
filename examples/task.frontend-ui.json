@@ -22,7 +22,9 @@
     "Project lint and build pass."
   ],
   "context": [
-    "docs/design-system.md"
+    "docs/design-system.md",
+    "src/app/dashboard/page.tsx",
+    "src/components/dashboard/KpiCard.tsx"
   ],
   "setup_commands": [
     "npm ci"
@@ -36,12 +38,16 @@
   ],
   "worker": {
     "agent": "gb-frontend-coder",
-    "effort": "high",
+    "effort": "medium",
     "print_timeout": "30m"
   },
   "limits": {
     "max_retries": 2,
     "max_rework_cycles": 3,
-    "max_blocker_answers": 3
-  }
+    "max_blocker_answers": 3,
+    "max_turn_tokens": 1500000,
+    "max_task_tokens": 4000000,
+    "max_turn_tool_steps": 250
+  },
+  "notes": "KPI cards are rendered in src/app/dashboard/page.tsx; KpiCard already accepts a 'size' prop. Reuse tokens from docs/design-system.md."
 }

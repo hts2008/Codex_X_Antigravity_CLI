@@ -19,8 +19,9 @@ import {
   cancelFile, EventLog, loadTaskRecord, runFile, saveTaskRecord, saveTurn, writeTaskFile, type RunInfo,
 } from "./store.js";
 import {
-  WorkerResultSchema, type TaskRecord, type TaskState, type TurnSummary, type WorkerEnvelope,
+  tokenLimits, WorkerResultSchema, type TaskRecord, type TaskState, type TurnSummary, type WorkerEnvelope,
 } from "./types.js";
+import { addUsage, fmtTokens, normalizeUsage, subUsage, type TokenUsage } from "./usage.js";
 
 const PERMISSION_HINT = /(permission|denied|not allowed|soft-den|requires approval|blocked by)/i;
 
@@ -32,12 +33,17 @@ interface AgyOutcome {
   permissionNotices: string[];
   toolErrors: string[];
   toolSteps: number;
+  toolCounts: Record<string, number>;
+  stepUsage?: TokenUsage;
+  budgetStop?: string;
   canceled: boolean;
   watchdog: boolean;
   spawnError?: string;
 }
 
-async function runAgy(record: TaskRecord, prompt: string, kind: string, runInfo: RunInfo & { agy_pid?: number }): Promise<AgyOutcome> {
+type LiveRunInfo = RunInfo & { agy_pid?: number; live?: { usage?: TokenUsage; tool_steps: number; updated_at: string } };
+
+async function runAgy(record: TaskRecord, prompt: string, kind: string, runInfo: LiveRunInfo): Promise<AgyOutcome> {
   const t = record.task;
   const { command, prefixArgs } = agyCommand();
   const args = [
@@ -53,7 +59,30 @@ async function runAgy(record: TaskRecord, prompt: string, kind: string, runInfo:
   if (kind !== "initial" && record.conversation_id) args.push("--conversation", record.conversation_id);
 
   const out: AgyOutcome = {
-    exitCode: null, stderr: "", permissionNotices: [], toolErrors: [], toolSteps: 0, canceled: false, watchdog: false,
+    exitCode: null, stderr: "", permissionNotices: [], toolErrors: [], toolSteps: 0, toolCounts: {}, canceled: false, watchdog: false,
+  };
+  const limits = tokenLimits(t);
+  const priorTaskTokens = record.usage_total?.total_tokens ?? 0;
+  let lastLiveWrite = 0;
+  const countedSteps = new Set<string>();
+  const writeLive = async (force = false) => {
+    if (!force && Date.now() - lastLiveWrite < 3_000) return;
+    lastLiveWrite = Date.now();
+    runInfo.live = { usage: out.stepUsage, tool_steps: out.toolSteps, updated_at: new Date().toISOString() };
+    await writeJsonAtomic(runFile(record.repo_path, t.task_id), runInfo).catch(() => undefined);
+  };
+  /** Enforce token / tool-step budgets while the worker runs. */
+  const checkBudgets = () => {
+    if (out.budgetStop || out.canceled) return;
+    const used = out.stepUsage?.total_tokens ?? 0;
+    if (limits.max_turn_tokens && used >= limits.max_turn_tokens) {
+      out.budgetStop = `turn token budget reached (${fmtTokens(used)} >= max_turn_tokens ${fmtTokens(limits.max_turn_tokens)})`;
+    } else if (limits.max_task_tokens && priorTaskTokens + used >= limits.max_task_tokens) {
+      out.budgetStop = `task token budget reached (${fmtTokens(priorTaskTokens + used)} >= max_task_tokens ${fmtTokens(limits.max_task_tokens)})`;
+    } else if (limits.max_turn_tool_steps && out.toolSteps >= limits.max_turn_tool_steps) {
+      out.budgetStop = `tool-step budget reached (${out.toolSteps} >= max_turn_tool_steps ${limits.max_turn_tool_steps})`;
+    }
+    if (out.budgetStop) killTree(child);
   };
   const events = new EventLog(path.join(taskDir(record.repo_path, t.task_id), "events.ndjson"));
   await events.append(JSON.stringify({ event: "gravitybridge_turn_start", turn: runInfo.turn, kind, at: new Date().toISOString() }));
@@ -110,10 +139,24 @@ async function runAgy(record: TaskRecord, prompt: string, kind: string, runInfo:
       if (ev.event === "init" && typeof ev.conversation_id === "string" && ev.conversation_id) out.conversationId = ev.conversation_id;
       if (ev.event === "step_update" && ev.step_update) {
         const s = ev.step_update;
+        if (s.state === "DONE") {
+          const u = normalizeUsage(s.usage);
+          const key = typeof s.step_index === "number" ? `${s.conversation_id ?? ""}:${s.step_index}` : undefined;
+          if (u && !(key && countedSteps.has(key))) {
+            if (key) countedSteps.add(key);
+            out.stepUsage = addUsage(out.stepUsage, u);
+          }
+        }
         if (s.step_type === "tool" && s.state === "DONE") {
           out.toolSteps += 1;
+          const name = String(s.tool_name ?? s.tool_info?.name ?? "unknown").slice(0, 60);
+          out.toolCounts[name] = (out.toolCounts[name] ?? 0) + 1;
           const err = s.tool_info?.error;
-          if (err && out.toolErrors.length < 30) out.toolErrors.push(head(`${s.tool_name ?? s.tool_info?.name}: ${err.message ?? JSON.stringify(err)}`, 400));
+          if (err && out.toolErrors.length < 30) out.toolErrors.push(head(`${name}: ${err.message ?? JSON.stringify(err)}`, 400));
+        }
+        if (s.state === "DONE") {
+          checkBudgets();
+          await writeLive();
         }
       }
       if (ev.event === "result" && ev.result && typeof ev.result === "object") out.envelope = ev.result as WorkerEnvelope;
@@ -138,7 +181,7 @@ async function main(): Promise<void> {
     throw new Error(`Runner started for turn ${turnNo} but record is ${record.state}/${record.active_run?.turn}`);
   }
   const kind = record.active_run.kind;
-  const runInfo: RunInfo & { agy_pid?: number } = { pid: process.pid, turn: turnNo, started_at: new Date().toISOString() };
+  const runInfo: LiveRunInfo = { pid: process.pid, turn: turnNo, started_at: new Date().toISOString() };
   await writeJsonAtomic(runFile(repoPath, taskId), runInfo);
 
   const t = record.task;
@@ -168,15 +211,27 @@ async function main(): Promise<void> {
     if (!error) {
       const prompt = await fs.readFile(path.join(taskDir(repoPath, taskId), "prompts", `${turnNo}.md`), "utf8");
       agy = await runAgy(record, prompt, kind, runInfo);
-      if (agy.conversationId) record.conversation_id = agy.conversationId;
       turn.exit_code = agy.exitCode;
       turn.agy_status = agy.envelope?.status;
       turn.permission_notices = agy.permissionNotices;
       turn.tool_errors = agy.toolErrors;
       turn.tool_steps = agy.toolSteps;
-      turn.usage = agy.envelope?.usage;
+      turn.tool_counts = agy.toolCounts;
+      turn.reported_usage = agy.envelope?.usage;
+      // Per-turn usage: sum of step usage; otherwise derive from the session-cumulative envelope.
+      const reported = normalizeUsage(agy.envelope?.usage);
+      const sameConversation = kind !== "initial" && !!record.conversation_id && agy.conversationId === record.conversation_id;
+      turn.usage = agy.stepUsage
+        ?? (reported ? (sameConversation ? subUsage(reported, record.reported_usage_cumulative) ?? reported : reported) : undefined);
+      if (reported) record.reported_usage_cumulative = reported;
+      if (agy.conversationId) record.conversation_id = agy.conversationId;
+      if (turn.usage) record.usage_total = addUsage(record.usage_total, turn.usage);
+      if (agy.budgetStop) turn.budget_stop = agy.budgetStop;
 
       if (agy.canceled) { outcome = "CANCELED"; error = "Canceled by Codex (cancel_task)."; }
+      else if (agy.budgetStop) {
+        error = `Budget stop: ${agy.budgetStop}. Partial work is kept in the worktree. Narrow the task/context, raise the limit, retry_task, or TAKEOVER.`;
+      }
       else if (agy.spawnError) error = agy.spawnError;
       else if (agy.watchdog) error = `Worker exceeded print_timeout (${t.worker.print_timeout}) + grace and was killed.`;
       else if (!agy.envelope) error = `No terminal result event (exit ${agy.exitCode}). stderr: ${tail(agy.stderr, 1_500)}`;
@@ -266,6 +321,7 @@ async function main(): Promise<void> {
 function pick(r: TaskRecord): Partial<TaskRecord> {
   return {
     conversation_id: r.conversation_id, setup_ok: r.setup_ok, changed_files: r.changed_files, scope_violations: r.scope_violations,
+    usage_total: r.usage_total, reported_usage_cumulative: r.reported_usage_cumulative,
   };
 }
 
@@ -273,7 +329,7 @@ function compactTurn(t: TurnSummary): TurnSummary {
   return {
     turn: t.turn, kind: t.kind, started_at: t.started_at, finished_at: t.finished_at, outcome: t.outcome,
     error: t.error ? head(t.error, 500) : undefined, head_before: t.head_before, head_after: t.head_after,
-    turn_changed_files: t.turn_changed_files?.slice(0, 100), tool_steps: t.tool_steps,
+    turn_changed_files: t.turn_changed_files?.slice(0, 100), tool_steps: t.tool_steps, usage: t.usage, budget_stop: t.budget_stop,
   };
 }
 

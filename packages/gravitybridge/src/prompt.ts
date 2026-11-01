@@ -1,6 +1,7 @@
 import { head } from "./fsutil.js";
 import { ALWAYS_FORBIDDEN } from "./scope.js";
-import type { TaskRecord, TurnKind } from "./types.js";
+import { tokenLimits, type TaskRecord, type TurnKind } from "./types.js";
+import { fmtTokens } from "./usage.js";
 
 function rules(record: TaskRecord): string {
   const t = record.task;
@@ -20,12 +21,37 @@ function rules(record: TaskRecord): string {
 - Do NOT run git commands that change history or branches (commit, push, merge, rebase, reset, checkout, switch, stash, branch, worktree). GravityBridge snapshots your work automatically.
 - Commands pre-approved for you: ${cmds.length ? cmds.map((c) => `\`${c}\``).join(", ") : "(none)"}. Other commands may be denied; if one is denied, report it in known_issues instead of looping.
 
+## Work efficiently (budgets are enforced)
+
+Every tool call re-sends the whole conversation to the model, so each extra file read or long output multiplies the cost.
+${budgetText(record)}
+- Start with the context files listed in the task. Then open only code you will change or must call. Locate code with grep/find instead of opening many files; read only the relevant part of large files.
+- Do not re-read a file you already read unless it changed. Do not list or read build output, lockfiles, vendored or generated files, node_modules, dist.
+- Keep command output short (quiet/summary flags, targeted tests). Never print whole large files or full logs.
+- Run the validation commands once your change is complete (targeted checks while iterating are fine). GravityBridge re-runs them independently.
+- If the same error repeats 3 times, or the task needs broad exploration it does not describe, stop and return worker_status="blocked" with a precise question instead of searching on.
+
 ## Required output
 
 Return the schema-constrained JSON result with task_id exactly "${t.task_id}". Report files you actually changed, commands you actually ran and their real outcome. GravityBridge independently re-checks changed files and re-runs validation, so inaccurate claims will be detected.`;
 }
 
-export function buildPrompt(record: TaskRecord, kind: TurnKind, input?: string): string {
+function budgetText(record: TaskRecord): string {
+  const l = tokenLimits(record.task);
+  const parts: string[] = [];
+  if (l.max_turn_tokens) parts.push(`${fmtTokens(l.max_turn_tokens)} tokens`);
+  if (l.max_turn_tool_steps) parts.push(`${l.max_turn_tool_steps} tool calls`);
+  return parts.length
+    ? `- This turn is stopped automatically after ${parts.join(" or ")}. Aim for far less: a focused task normally needs a few dozen tool calls.`
+    : "- Aim for a few dozen tool calls for a focused task.";
+}
+
+export interface PromptExtras {
+  /** Pre-rendered summaries of related_tasks (initial turn only). */
+  related?: string;
+}
+
+export function buildPrompt(record: TaskRecord, kind: TurnKind, input?: string, extras: PromptExtras = {}): string {
   const t = record.task;
   if (kind === "initial") {
     const contract = {
@@ -36,6 +62,7 @@ export function buildPrompt(record: TaskRecord, kind: TurnKind, input?: string):
       scope: t.scope,
       acceptance_criteria: t.acceptance_criteria,
       context_files_to_read_first: t.context,
+      related_tasks: t.related_tasks?.length ? t.related_tasks : undefined,
       validation_commands: t.validation_commands,
       notes: t.notes,
     };
@@ -49,9 +76,13 @@ ${rules(record)}
 ${JSON.stringify(contract, null, 2)}
 \`\`\`
 
-## Steps
+${extras.related ? `## Already done by related tasks (trust this; do not re-explore it)
 
-1. Read the context files and the code you will change.
+${extras.related}
+
+` : ""}## Steps
+
+1. Read the context files and only the code you will change.
 2. Implement the smallest coherent change that satisfies every acceptance criterion.
 3. Run the validation commands; fix failures caused by your change.
 4. Return the structured result.
@@ -66,6 +97,7 @@ ${JSON.stringify(contract, null, 2)}
     return `# GravityBridge ${title} for task ${t.task_id}
 
 Continue in the same worktree. Keep the parts that were not criticised. Do not restart or redesign.
+You already have the context from earlier turns of this conversation: do not re-read files you already read unless they changed since. Fix only what is listed below.
 
 Original goal: ${t.goal}
 
